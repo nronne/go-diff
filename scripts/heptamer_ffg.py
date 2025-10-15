@@ -36,7 +36,8 @@ n_atoms = 7                     # number of atoms in the optimization
 atomic_numbers = [78] * n_atoms # atomic numbers of the atoms in the optimization (e.g., [78] for Pt)
 confinement_above_zmax = [1.0, 6.0]  # confinement above the maximum z position of the template 
 
-force_field_guidance = 0.0
+force_field_guidance = 0.2
+
 
 ##### CALCULATOR #####
 from mace.calculators import mace_mp

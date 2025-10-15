@@ -8,6 +8,11 @@ cd agedi
 git checkout boltzmann-diffusion
 pip install .
 pip install matscipy schnetpack
+
+cd ..
+git clone https://github.com/nronne/go-diff.git
+cd go-diff
+pip install .
 ```
 
 If you want to reproduce the results in the paper also install MACE and AGOX
