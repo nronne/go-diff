@@ -16,13 +16,13 @@ import schnetpack as spk
 from agedi.models.schnetpack import PositionsScore, SchNetPackTranslator
 from agedi.models.schnetpack.regressor_heads import Forces
 
-from agedi.diffusion.diffusion import Diffusion
+from agedi.diffusion.diffusion import Diffusion, ForcefieldGuidanceConfig
 from agedi.data import Dataset, AtomsGraph
 from agedi.models import ScoreModel
 from agedi.models.regressor import RegressorModel
 from agedi.diffusion.noisers.weighted_pos import WeightedPositionsNoiser
 from agedi.diffusion.distributions import TruncatedNormal, UniformCellConfined
-from agedi.cli.train import get_conditioning
+from agedi.models.conditionings import TimeConditioning
 
 
 class GODiff:
@@ -170,7 +170,7 @@ class GODiff:
         ]
         
         # Create AtomsGraph from template atoms
-        self.template = AtomsGraph.from_atoms(template_atoms, initialize_mask=False)
+        self.template = AtomsGraph.from_atoms(template_atoms, cutoff=self.cutoff, initialize_mask=False)
         self.template.confinement = torch.tensor(self.confinement, dtype=torch.float32).reshape(1, 2)
     
     def _init_model(self):
@@ -190,7 +190,7 @@ class GODiff:
             radial_basis=spk.nn.GaussianRBF(n_rbf=30, cutoff=self.cutoff),
             cutoff_fn=spk.nn.CosineCutoff(self.cutoff),
         )
-        conditionings = get_conditioning('none')
+        conditionings = [TimeConditioning()]
 
         # Create score model
         cond_features = sum([c.output_dim for c in conditionings])
@@ -331,6 +331,7 @@ class GODiff:
             graph_list = self.diffusion.sample(
                 N=N,
                 template=self.template,
+                cutoff=self.cutoff,
                 steps=self.sampling_steps,
                 eps=0.005,
                 save_path=False,
@@ -340,9 +341,11 @@ class GODiff:
                 cell=self.template_atoms.get_cell(),
                 atomic_numbers=self.atomic_numbers,
                 confinement=self.confinement,
-                force_field_guidance=guidance,
-                force_threshold=self.force_threshold,
-                max_extra_steps=self.max_extra_steps,
+                ff_guidance=ForcefieldGuidanceConfig(
+                    guidance=guidance,
+                    force_threshold=self.force_threshold,
+                    max_extra_steps=self.max_extra_steps,
+                ),
             )
 
         atoms_list = [g.to_atoms() for g in graph_list]
@@ -596,7 +599,7 @@ class GODiff:
         dataset.setup()
 
         # Train diffusion model
-        self.diffusion.regressor_training = False
+        # self.diffusion.regressor_training = False
         trainer.fit(self.diffusion, dataset)
         
         # Save checkpoint
@@ -635,7 +638,7 @@ class GODiff:
         dataset.setup()
 
         # Set regressor training mode
-        self.diffusion.regressor_training = True
+        # self.diffusion.regressor_training = True
         trainer.fit(self.diffusion, dataset)
         
         # Save checkpoint
@@ -644,7 +647,7 @@ class GODiff:
         print(f"Saved regressor model checkpoint to {ckpt_path}")
 
         # Reset regressor training mode
-        self.diffusion.regressor_training = False
+        # self.diffusion.regressor_training = False
 
         return self.diffusion, trainer
 
