@@ -5,8 +5,16 @@ from torch.nn.functional import cosine_similarity
 from torch_geometric.data import Batch
 
 class AdaptiveRefinementStop(Callback):
-    def __init__(self, min_steps=100, patience=50, smooth_factor=0.9, check_interval=1):
+    def __init__(self, min_steps=100, patience=50, smooth_factor=0.75, check_interval=1):
+        """
+        Args:
+            min_steps: Minimum global steps before starting to check for stopping.
+            patience: Number of consecutive checks with low agreement before stopping.
+            smooth_factor: EMA smoothing factor for agreement tracking (0 < smooth_factor < 1).
+            check_interval: How often (in steps) to check the agreement.
+        """
         super().__init__()
+        self._min_steps = min_steps
         self.min_steps = min_steps
         self.patience = patience
         self.smooth_factor = smooth_factor
@@ -57,13 +65,6 @@ class AdaptiveRefinementStop(Callback):
             print(f"\n[Adaptive Stop] Agreement peaked at {self.max_agreement:.4f} "
                   f"and dropped to {self.ema_agreement:.4f}. Stopping.")
             trainer.should_stop = True
-        else:
-            print(f"\n[Adaptive Stop] Step {trainer.global_step}: "
-                  f"Current Agreement: {current_agreement:.4f}, "
-                  f"EMA Agreement: {self.ema_agreement:.4f}, "
-                  f"Max Agreement: {self.max_agreement:.4f}, "
-                  f"Patience Counter: {self.patience_counter}")
-
             
     def _calculate_split_agreement(self, trainer, pl_module, batch, batch_idx):
         # 1. Split the batch into two independent halves
@@ -86,6 +87,8 @@ class AdaptiveRefinementStop(Callback):
         grad_b = self._get_flat_grad(pl_module)
 
         # 4. Compute Agreement (Cosine Similarity)
+        grad_a /= torch.norm(grad_a)
+        grad_b /= torch.norm(grad_b)
         agreement = cosine_similarity(grad_a.unsqueeze(0), grad_b.unsqueeze(0)).item()
         pl_module.zero_grad()
         
@@ -107,7 +110,7 @@ class AdaptiveRefinementStop(Callback):
         self.ema_agreement = 0.0
         self.max_agreement = -1.0
         self.patience_counter = 0
-        self.min_steps += trainer.current_epoch
+        self.min_steps = trainer.current_epoch + self._min_steps
 
 
 class FlopsAndTimingCallback(Callback):
