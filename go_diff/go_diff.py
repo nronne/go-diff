@@ -486,7 +486,7 @@ class GODiff:
         if path is not None:
             write(path, traj)
 
-    def update_adaptive_buffer_size(energies, temperature, min_B=16, max_B=1000):
+    def update_adaptive_buffer_size(self, energies, temperature, min_B=16, max_B=1000):
         # 1. Calculate weights
         energies = np.array(energies)
         # Scale and shift energies for numerical stability
@@ -496,7 +496,7 @@ class GODiff:
         weights = exp_Es / np.sum(exp_Es) * len(energies)
 
         # 2. Calculate Effective Sample Size
-        ess = 1.0 / torch.sum(weights**2)
+        ess = 1.0 / np.sum(weights**2)
 
         # 3. Scale buffer size (Example: B should be roughly 10x the effective diversity)
         target_B = int(ess.item() * 10)
@@ -504,7 +504,7 @@ class GODiff:
         # 4. Smooth the update (Moving Average) to prevent jitter
         new_B = 0.9 * self.buffer_size + 0.1 * target_B
 
-        self.buffer_size = int(torch.clamp(torch.tensor(new_B), min_B, max_B))
+        self.buffer_size = int(np.clip(new_B, min_B, max_B))
 
 
     def get_buffer(self, data, energies, forces, temperature):

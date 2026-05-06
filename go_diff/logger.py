@@ -301,7 +301,7 @@ class GODiffLogger:
             fig, ax = plt.subplots(figsize=(8, 5))
 
             for t in temps_sorted:
-                energies_t = np.asarray(grouped[t]) - global_min
+                energies_t = np.asarray(grouped[t])# - global_min
                 if len(energies_t) < 2:
                     # Not enough data for KDE – fall back to a single point
                     ax.scatter([t], [float(np.mean(energies_t))],
