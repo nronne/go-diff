@@ -27,6 +27,7 @@ from agedi.models.conditionings import TimeConditioning
 from .temperature_schedule import TemperatureSchedule
 from .sample_controller import SampleController
 from .training_controller import AdaptiveRefinementStop
+from .logger import GODiffLogger
 
 class GODiff:
     """
@@ -158,6 +159,7 @@ class GODiff:
         self.diffusion = None
         self.template = None
         self.confinement = None
+        self._godiff_logger = None  # Initialized in run() once the TB writer is available
         
         # Initialize model and template
         self._init_template(template)
@@ -527,9 +529,30 @@ class GODiff:
         
         return buffer_data, buffer_energies, buffer_forces, buffer_props
     
-    def sample_stage(self, guidance, all_data, all_energies, all_forces, 
+    def sample_stage(self, iteration, guidance, all_data, all_energies, all_forces,
                      energy_cut, data_writer, logdir):
-        """Run a sampling stage at a specific temperature."""
+        """Run a sampling stage at a specific temperature.
+
+        Parameters
+        ----------
+        iteration : int
+            Current outer-loop iteration index, used as the TensorBoard step
+            for iteration-level metric logging.
+        guidance : float
+            Force-field guidance strength passed to the sampler.
+        all_data : list
+            Accumulated structures from all previous iterations.
+        all_energies : list
+            Accumulated energies from all previous iterations.
+        all_forces : list
+            Accumulated forces from all previous iterations.
+        energy_cut : float
+            Current energy cut-off value (passed through unchanged).
+        data_writer : ase.io.Trajectory
+            Trajectory writer for persisting all sampled structures.
+        logdir : pathlib.Path
+            Directory used for saving trajectory files.
+        """
 
         temperature = self.temperature_schedule.temperature
         new_data, new_energies, new_forces = [], [], []
@@ -544,8 +567,6 @@ class GODiff:
             new_data.extend(data)
             new_energies.extend(energies)
             new_forces.extend(forces)
-
-
 
         name = f"{temperature:.3f}" if temperature is not None else "initial"
         self.save_trajectory(
@@ -564,6 +585,15 @@ class GODiff:
 
         # Save filtered structures
         self.save_trajectory(filtered_data, filtered_energies, filtered_forces, writer=data_writer)
+
+        # Compute ESS and heat capacity before updating the temperature schedule
+        ess, ess_ratio, heat_capacity = None, None, None
+        if temperature is not None and len(filtered_energies) > 0:
+            ess = self.sample_controller.calculate_ess(filtered_energies, temperature)
+            ess_ratio = ess / len(filtered_energies)
+            heat_capacity = float(
+                self.temperature_schedule.compute_heat_capacity(filtered_energies)
+            )
 
         # Update temperature
         temperature = self.temperature_schedule.next(filtered_energies)
@@ -585,6 +615,22 @@ class GODiff:
             buffer_forces, 
             path=str(logdir/f"buffer_T{temperature:.2f}.traj")
         )
+
+        # Log iteration-level metrics to TensorBoard
+        if self._godiff_logger is not None:
+            self._godiff_logger.log_iteration(
+                iteration,
+                temperature=temperature,
+                new_energies=new_energies,
+                new_forces=new_forces,
+                all_energies=all_energies,
+                all_forces=all_forces,
+                buffer_energies=buffer_energies,
+                buffer_forces=buffer_forces,
+                ess=ess,
+                ess_ratio=ess_ratio,
+                heat_capacity=heat_capacity,
+            )
         
         return buffer, weighted_props, all_data, all_energies, all_forces, energy_cut
 
@@ -683,6 +729,10 @@ class GODiff:
         logdir.mkdir(parents=True, exist_ok=True)
         print(f"Logging directory: {logdir}")
 
+        # Create the GO-Diff TensorBoard logger and wire it to the training controller
+        self._godiff_logger = GODiffLogger(trainer.logger.experiment)
+        self.training_controller.set_logger(self._godiff_logger)
+
         # Initialize trajectory writer for all data
         data_writer = Trajectory(str(logdir/"all_data.traj"), mode='w')
 
@@ -706,6 +756,7 @@ class GODiff:
             
             # Sample at current temperature
             buffer, weighted_props, all_data, all_energies, all_forces, energy_cut = self.sample_stage(
+                i,
                 guidance,
                 all_data,
                 all_energies,

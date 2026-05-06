@@ -15,6 +15,13 @@ class AdaptiveRefinementStop(Callback):
         self.max_agreement = -1.0
         self.patience_counter = 0
 
+        # Optional GODiffLogger for TensorBoard logging
+        self._godiff_logger = None
+
+    def set_logger(self, logger):
+        """Attach a GODiffLogger so agreement metrics are written to TensorBoard."""
+        self._godiff_logger = logger
+
     def on_train_batch_start(self, trainer, pl_module, batch, batch_idx):
         if trainer.global_step < self.min_steps or trainer.global_step % self.check_interval != 0:
             return
@@ -33,7 +40,17 @@ class AdaptiveRefinementStop(Callback):
         else:
             self.patience_counter += 1
 
-        # 4. Logic: If agreement has significantly dropped from its peak, stop.
+        # 4. Log gradient-agreement metrics to TensorBoard
+        if self._godiff_logger is not None:
+            self._godiff_logger.log_training_step(
+                trainer.global_step,
+                agreement_current=current_agreement,
+                agreement_ema=self.ema_agreement,
+                agreement_max=self.max_agreement,
+                patience_counter=self.patience_counter,
+            )
+
+        # 5. Logic: If agreement has significantly dropped from its peak, stop.
         # This means the model has finished learning the "consensus" and is now over-fitting.
         if self.patience_counter >= self.patience and self.ema_agreement < (0.5 * self.max_agreement):
             print(f"\n[Adaptive Stop] Agreement peaked at {self.max_agreement:.4f} "
