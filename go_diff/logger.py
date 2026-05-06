@@ -265,7 +265,7 @@ class GODiffLogger:
         # Plot 1: best energy as a function of total data
         # -----------------------------------------------------------------
         if len(self._best_energy_history) >= 1:
-            fig, ax = plt.subplots(figsize=(5, 2))
+            fig, ax = plt.subplots(figsize=(8, 4))
             ns, bests = zip(*self._best_energy_history)
             ax.plot(ns, bests, "o-", color="steelblue", markersize=4, linewidth=1.5)
             ax.set_xlabel("Total data (structures)")
@@ -298,7 +298,7 @@ class GODiffLogger:
                 for i, t in enumerate(temps_sorted)
             }
 
-            fig, ax = plt.subplots(figsize=(8, 5))
+            fig, ax = plt.subplots(figsize=(8, 4))
 
             for t in temps_sorted:
                 energies_t = np.asarray(grouped[t])# - global_min
@@ -340,7 +340,7 @@ class GODiffLogger:
         # Plot 3: new-sample energy distribution (histogram)
         # -----------------------------------------------------------------
         if len(new_energies) > 0:
-            fig, ax = plt.subplots(figsize=(4, 2))
+            fig, ax = plt.subplots(figsize=(8, 4))
             ax.hist(new_energies, bins=max(1, min(20, len(new_energies))), color="steelblue",
                     edgecolor="white", alpha=0.75)
             ax.axvline(float(np.min(new_energies)), color="red", linestyle="--",
@@ -371,7 +371,7 @@ class GODiffLogger:
             means_l = np.array(means_l)
             stds_l = np.array(stds_l)
 
-            fig, ax = plt.subplots(figsize=(5, 2))
+            fig, ax = plt.subplots(figsize=(8, 4))
             ax.fill_between(
                 steps_l, means_l - stds_l, means_l + stds_l,
                 alpha=0.25, color="steelblue", label="mean ± std"
