@@ -24,6 +24,9 @@ from agedi.diffusion.noisers.weighted_pos import WeightedPositionsNoiser
 from agedi.diffusion.distributions import TruncatedNormal, UniformCellConfined
 from agedi.models.conditionings import TimeConditioning
 
+from .temperature_schedule import TemperatureSchedule
+from .sample_controller import SampleController
+from .training_controller import AdaptiveRefinementStop
 
 class GODiff:
     """
@@ -36,10 +39,12 @@ class GODiff:
                  template,
                  atomic_numbers,                 
                  name="godiff",
-                 n_epochs_per_loop=2000,
-                 n_steps_per_loop=8000,
-                 temperatures=None,
-                 samples_per_stage=128,
+                 max_steps_per_loop=10_000,
+                 temperature_schedule=TemperatureSchedule(),
+                 sample_controller=SampleController(),
+                 training_controller=AdaptiveRefinementStop(),
+                 max_iterations=1000,
+                 samples_batch_size=16,
                  buffer_size=64,
                  min_E=-500,
                  ckpt_path=None,
@@ -70,12 +75,12 @@ class GODiff:
             Name of the experiment for logging
         n_epochs_per_loop : int
             Number of epochs per training loop
-        n_steps_per_loop : int
+        max_steps_per_loop : int
             Number of steps per training loop
         temperatures : list or None
             List of temperatures for annealing; if None, uses default log-spaced values
-        samples_per_stage : int
-            Number of evaluated samples per loop
+        samples_batch_size : int
+            Number of evaluated samples to generate per sampling batch
         buffer_size : int
             Size of the replay buffer for each temperature
         min_E : float
@@ -116,17 +121,15 @@ class GODiff:
             Computation device ('cuda' or 'cpu')
         """
         self.calculator = calculator
+        self.temperature_schedule = temperature_schedule
+        self.sample_controller = sample_controller
+        self.training_controller = training_controller
+        
         self.template_atoms = template
         self.name = name
-        self.n_epochs_per_loop = n_epochs_per_loop
-        self.n_steps_per_loop = n_steps_per_loop
+        self.max_iterations = max_iterations
         
-        if temperatures is None:
-            self.temperatures = np.exp(np.linspace(np.log(5.0), np.log(0.02), 20))
-        else:
-            self.temperatures = temperatures
-            
-        self.samples_per_stage = samples_per_stage
+        self.samples_batch_size = samples_batch_size
         self.buffer_size = buffer_size
         self.min_E = min_E
         self.ckpt_path = ckpt_path
@@ -139,6 +142,7 @@ class GODiff:
         self.lr = lr
         self.lr_factor = lr_factor
         self.lr_patience = lr_patience
+        self.max_steps_per_loop = max_steps_per_loop
         
         self.sampling_steps = sampling_steps
         self.atomic_numbers = atomic_numbers
@@ -251,10 +255,8 @@ class GODiff:
 
         # Log hyperparameters
         logger.log_hyperparams({
-            'n_epochs_per_loop': self.n_epochs_per_loop,
-            'n_steps_per_loop': self.n_steps_per_loop,
-            'temperatures': self.temperatures.tolist(),
-            'samples_per_stage': self.samples_per_stage,
+            'max_steps_per_loop': self.max_steps_per_loop,
+            'samples_batch_size': self.samples_batch_size,
             'min_E': self.min_E,
             'ckpt_path': self.ckpt_path,
             'cutoff': self.cutoff,
@@ -288,6 +290,7 @@ class GODiff:
                 save_top_k=1,
                 every_n_epochs=1,
             ),
+            self.training_controller,
         ]
         
         trainer_kwargs = dict(
@@ -305,7 +308,7 @@ class GODiff:
 
         return Trainer(**trainer_kwargs)
     
-    def sample(self, N=1, guidance=None, progress_bar=False):
+    def sample(self, guidance=None, progress_bar=False):
         """Sample structures using the diffusion model.
         
         Parameters:
@@ -329,7 +332,7 @@ class GODiff:
         
         with torch.no_grad():
             graph_list = self.diffusion.sample(
-                N=N,
+                N=self.samples_batch_size,
                 template=self.template,
                 cutoff=self.cutoff,
                 steps=self.sampling_steps,
@@ -524,20 +527,32 @@ class GODiff:
         
         return buffer_data, buffer_energies, buffer_forces, buffer_props
     
-    def sample_stage(self, temperature, guidance, all_data, all_energies, all_forces, 
+    def sample_stage(self, guidance, all_data, all_energies, all_forces, 
                      energy_cut, data_writer, logdir):
         """Run a sampling stage at a specific temperature."""
-        # Sample new structures
-        new_data = self.sample(N=self.samples_per_stage, guidance=guidance)
-        new_data = self.check_min_dist(new_data, min_dist=1.0)
+
+        temperature = self.temperature_schedule.temperature
+        new_data, new_energies, new_forces = [], [], []
         
-        # Evaluate energies and forces
-        new_energies, new_forces = self.evaluate(new_data)
+        while self.sample_controller.continue_sampling(new_energies, temperature): # Sample new structures
+            data = self.sample(guidance=guidance)
+            data = self.check_min_dist(data, min_dist=1.0)
+        
+            # Evaluate energies and forces
+            energies, forces = self.evaluate(data)
+            
+            new_data.extend(data)
+            new_energies.extend(energies)
+            new_forces.extend(forces)
+
+
+
+        name = f"{temperature:.3f}" if temperature is not None else "initial"
         self.save_trajectory(
             new_data, 
             new_energies, 
             new_forces, 
-            path=str(logdir/f"new_data_T{temperature:.2f}.traj"), 
+            path=str(logdir/f"new_data_T{name}.traj"), 
             writer=data_writer
         )
         
@@ -549,6 +564,9 @@ class GODiff:
 
         # Save filtered structures
         self.save_trajectory(filtered_data, filtered_energies, filtered_forces, writer=data_writer)
+
+        # Update temperature
+        temperature = self.temperature_schedule.next(filtered_energies)
 
         # Update global data
         all_data.extend(filtered_data)
@@ -578,8 +596,12 @@ class GODiff:
         steps_per_epoch = len(buffer) // self.batch_size
         if steps_per_epoch == 0:
             steps_per_epoch = 1
-        epochs_to_add = max(1, self.n_steps_per_loop // steps_per_epoch)
-        trainer.fit_loop.max_epochs += epochs_to_add
+        epochs_to_add = max(1, self.max_steps_per_loop // steps_per_epoch)
+
+        current_epoch = trainer.current_epoch
+        trainer.fit_loop.max_epochs = current_epoch + epochs_to_add
+        
+        self.training_controller.reset(trainer)
         
         print(f"Training for {epochs_to_add} epochs ({steps_per_epoch} steps/epoch)")
 
@@ -617,7 +639,7 @@ class GODiff:
         steps_per_epoch = len(data) // self.batch_size
         if steps_per_epoch == 0:
             steps_per_epoch = 1
-        epochs_to_add = max(1, self.n_steps_per_loop // steps_per_epoch)
+        epochs_to_add = max(1, self.max_steps_per_loop // steps_per_epoch)
         trainer.fit_loop.max_epochs += epochs_to_add
         
         print(f"Training for {epochs_to_add} epochs ({steps_per_epoch} steps/epoch)")
@@ -669,9 +691,10 @@ class GODiff:
         energy_cut = 0.0
         
         # Main training loop across temperatures
-        for i, temperature in enumerate(self.temperatures):
+        i = 0
+        while i < self.max_iterations:
             print(f"\n{'='*50}")
-            print(f"STAGE {i+1}/{len(self.temperatures)}: Temperature = {temperature:.4f}")
+            print(f"STAGE {i}")
             print(f"{'='*50}")
             
             # Set guidance level (0 for first stage, then use configured value)
@@ -683,7 +706,6 @@ class GODiff:
             
             # Sample at current temperature
             buffer, weighted_props, all_data, all_energies, all_forces, energy_cut = self.sample_stage(
-                temperature,
                 guidance,
                 all_data,
                 all_energies,
@@ -692,6 +714,9 @@ class GODiff:
                 data_writer,
                 logdir
             )
+
+            temperature = self.temperature_schedule.get_temperature()
+            print(f"Current temperature: {temperature:.4f}, Buffer size: {len(buffer)}, Total data size: {len(all_data)}")
             
             if not buffer:
                 print(f"Warning: Empty buffer at T={temperature}, skipping training")
@@ -706,6 +731,8 @@ class GODiff:
             self.diffusion, trainer = self.train_diffusion_stage(
                 temperature, trainer, buffer, weighted_props
             )
+            
+            i += 1
 
         print("\nTraining completed.")
         
