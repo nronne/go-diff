@@ -5,7 +5,7 @@ class SampleController:
         self, 
         initial_N=64, 
         max_N=256, 
-        target_ess_ratio=0.3, 
+        target_ess_ratio=0.9, 
     ):
         """
         Args:

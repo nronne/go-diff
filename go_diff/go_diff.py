@@ -535,6 +535,16 @@ class GODiff:
         buffer_props = [weighted_props[i] for i in sorter[:self.buffer_size]]
         
         return buffer_data, buffer_energies, buffer_forces, buffer_props
+
+    def _min_energy_filter(self, data, energies, forces):
+        valid_idx = [i for i, e in enumerate(energies) if e > self.min_E]
+        filtered_data = [data[i] for i in valid_idx]
+        filtered_energies = [energies[i] for i in valid_idx]
+        filtered_forces = [forces[i] for i in valid_idx]
+
+        return filtered_data, filtered_energies, filtered_forces
+
+
     
     def sample_stage(self, iteration, guidance, all_data, all_energies, all_forces,
                      energy_cut, data_writer, logdir):
@@ -577,6 +587,8 @@ class GODiff:
             energies, forces = self.evaluate(data)
             evaluation_wall_s += time.perf_counter() - t0
 
+            data, energy, forces = self._min_energy_filter(data, energies, forces)
+            
             new_data.extend(data)
             new_energies.extend(energies)
             new_forces.extend(forces)
@@ -590,31 +602,25 @@ class GODiff:
             writer=data_writer
         )
         
-        # Filter out structures with energy below min_E
-        valid_idx = [i for i, e in enumerate(new_energies) if e > self.min_E]
-        filtered_data = [new_data[i] for i in valid_idx]
-        filtered_energies = [new_energies[i] for i in valid_idx]
-        filtered_forces = [new_forces[i] for i in valid_idx]
-
         # Save filtered structures
-        self.save_trajectory(filtered_data, filtered_energies, filtered_forces, writer=data_writer)
+        self.save_trajectory(new_data, new_energies, new_forces, writer=data_writer)
 
         # Compute ESS and heat capacity before updating the temperature schedule
         ess, ess_ratio, heat_capacity = None, None, None
-        if temperature is not None and len(filtered_energies) > 0:
-            ess = self.sample_controller.calculate_ess(filtered_energies, temperature)
-            ess_ratio = ess / len(filtered_energies)
+        if temperature is not None and len(new_energies) > 0:
+            ess = self.sample_controller.calculate_ess(new_energies, temperature)
+            ess_ratio = ess / len(new_energies)
             heat_capacity = float(
-                self.temperature_schedule.compute_heat_capacity(filtered_energies)
+                self.temperature_schedule.compute_heat_capacity(new_energies)
             )
 
         # Update temperature
-        temperature = self.temperature_schedule.next(filtered_energies)
+        temperature = self.temperature_schedule.next(new_energies)
 
         # Update global data
-        all_data.extend(filtered_data)
-        all_energies.extend(filtered_energies)
-        all_forces.extend(filtered_forces)
+        all_data.extend(new_data)
+        all_energies.extend(new_energies)
+        all_forces.extend(new_forces)
 
         # Create buffer for training
         buffer, buffer_energies, buffer_forces, weighted_props = self.get_buffer(
