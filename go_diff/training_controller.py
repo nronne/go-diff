@@ -1,3 +1,4 @@
+import time
 import torch
 from lightning.pytorch.callbacks import Callback
 from torch.nn.functional import cosine_similarity
@@ -14,6 +15,13 @@ class AdaptiveRefinementStop(Callback):
         self.ema_agreement = 0.0
         self.max_agreement = -1.0
         self.patience_counter = 0
+
+        # Optional GODiffLogger for TensorBoard logging
+        self._godiff_logger = None
+
+    def set_logger(self, logger):
+        """Attach a GODiffLogger so agreement metrics are written to TensorBoard."""
+        self._godiff_logger = logger
 
     def on_train_batch_start(self, trainer, pl_module, batch, batch_idx):
         if trainer.global_step < self.min_steps or trainer.global_step % self.check_interval != 0:
@@ -33,7 +41,17 @@ class AdaptiveRefinementStop(Callback):
         else:
             self.patience_counter += 1
 
-        # 4. Logic: If agreement has significantly dropped from its peak, stop.
+        # 4. Log gradient-agreement metrics to TensorBoard
+        if self._godiff_logger is not None:
+            self._godiff_logger.log_training_step(
+                trainer.global_step,
+                agreement_current=current_agreement,
+                agreement_ema=self.ema_agreement,
+                agreement_max=self.max_agreement,
+                patience_counter=self.patience_counter,
+            )
+
+        # 5. Logic: If agreement has significantly dropped from its peak, stop.
         # This means the model has finished learning the "consensus" and is now over-fitting.
         if self.patience_counter >= self.patience and self.ema_agreement < (0.5 * self.max_agreement):
             print(f"\n[Adaptive Stop] Agreement peaked at {self.max_agreement:.4f} "
@@ -90,4 +108,104 @@ class AdaptiveRefinementStop(Callback):
         self.max_agreement = -1.0
         self.patience_counter = 0
         self.min_steps += trainer.current_epoch
-    
+
+
+class FlopsAndTimingCallback(Callback):
+    """Lightning callback that tracks per-training-step wall-time and estimates
+    FLOPs via ``torch.profiler`` for the first ``profile_steps`` steps of each
+    GO-Diff iteration.
+
+    For each iteration, ``torch.profiler`` actively captures FLOPs for the first
+    ``profile_steps`` training steps.  After that window the running-mean
+    FLOPs/step estimate is reused for all remaining steps, keeping the profiling
+    overhead negligible.  Calling :py:meth:`reset` at the start of a new
+    iteration restarts the profiling window so the estimate stays up-to-date as
+    the model evolves.
+
+    Parameters
+    ----------
+    profile_steps : int
+        Number of steps to actively profile with ``torch.profiler`` per
+        iteration (default: 5).
+    """
+
+    def __init__(self, profile_steps: int = 5):
+        super().__init__()
+        self.profile_steps = profile_steps
+        self._step_start: float = 0.0
+        self._profiling_steps_done: int = 0
+        self._flops_estimates: list = []
+        self._flops_per_step: float = 0.0
+        self._cumulative_flops: float = 0.0
+        self._profiler = None
+        self._profiler_available: bool = True
+        self._godiff_logger = None
+
+    def set_logger(self, logger) -> None:
+        """Attach a GODiffLogger for TensorBoard logging."""
+        self._godiff_logger = logger
+
+    def reset(self) -> None:
+        """Reset per-iteration profiling counters.
+
+        Called at the start of each new GO-Diff iteration so the FLOPs
+        estimate is refreshed for the new model state.
+        """
+        self._profiling_steps_done = 0
+        self._flops_estimates = []
+
+    def on_train_batch_start(self, trainer, pl_module, batch, batch_idx):
+        self._step_start = time.perf_counter()
+        # Profile only the first `profile_steps` steps per iteration.
+        # This callback is placed *after* AdaptiveRefinementStop in the
+        # callbacks list so the gradient-agreement extra backward passes are
+        # not included in the FLOPs estimate.
+        if self._profiler_available and self._profiling_steps_done < self.profile_steps:
+            activities = [torch.profiler.ProfilerActivity.CPU]
+            if torch.cuda.is_available():
+                activities.append(torch.profiler.ProfilerActivity.CUDA)
+            try:
+                self._profiler = torch.profiler.profile(
+                    activities=activities,
+                    with_flops=True,
+                    record_shapes=True,
+                )
+                self._profiler.__enter__()
+            except Exception:
+                self._profiler_available = False
+                self._profiler = None
+
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        step_wall_s = time.perf_counter() - self._step_start
+        step_flops = None
+
+        if self._profiler is not None:
+            try:
+                self._profiler.__exit__(None, None, None)
+                raw_flops = float(
+                    sum(e.flops for e in self._profiler.key_averages() if e.flops > 0)
+                )
+                self._flops_estimates.append(raw_flops)
+                self._profiling_steps_done += 1
+                self._flops_per_step = (
+                    sum(self._flops_estimates) / len(self._flops_estimates)
+                )
+                step_flops = raw_flops
+            except Exception:
+                self._profiler_available = False
+            finally:
+                self._profiler = None
+        elif self._flops_per_step > 0:
+            step_flops = self._flops_per_step
+
+        if step_flops is not None:
+            self._cumulative_flops += step_flops
+
+        if self._godiff_logger is not None:
+            self._godiff_logger.log_training_step(
+                trainer.global_step,
+                step_wall_s=step_wall_s,
+                step_flops=step_flops,
+                cumulative_flops=self._cumulative_flops if step_flops is not None else None,
+            )
+
