@@ -47,7 +47,7 @@ class GODiff:
                  training_controller=AdaptiveRefinementStop(),
                  max_iterations=1000,
                  samples_batch_size=16,
-                 buffer_size=64,
+                 initial_buffer_size=64,
                  min_E=-500,
                  ckpt_path=None,
                  cutoff=6.0,
@@ -132,7 +132,7 @@ class GODiff:
         self.max_iterations = max_iterations
         
         self.samples_batch_size = samples_batch_size
-        self.buffer_size = buffer_size
+        self.buffer_size = initial_buffer_size
         self.min_E = min_E
         self.ckpt_path = ckpt_path
         
@@ -485,7 +485,28 @@ class GODiff:
                 
         if path is not None:
             write(path, traj)
-    
+
+    def update_adaptive_buffer_size(self, energies, temperature, min_B=16, max_B=1000):
+        # 1. Calculate weights
+        energies = np.array(energies)
+        # Scale and shift energies for numerical stability
+        Es_scaled = -energies / temperature
+        Es_shifted = Es_scaled - np.max(Es_scaled)
+        exp_Es = np.exp(Es_shifted)
+        weights = exp_Es / np.sum(exp_Es) * len(energies)
+
+        # 2. Calculate Effective Sample Size
+        ess = 1.0 / np.sum(weights**2)
+
+        # 3. Scale buffer size (Example: B should be roughly 10x the effective diversity)
+        target_B = int(ess.item() * 10)
+
+        # 4. Smooth the update (Moving Average) to prevent jitter
+        new_B = 0.9 * self.buffer_size + 0.1 * target_B
+
+        self.buffer_size = int(np.clip(new_B, min_B, max_B))
+
+
     def get_buffer(self, data, energies, forces, temperature):
         """Create a buffer of structures selected by Boltzmann weighting.
         
@@ -505,6 +526,10 @@ class GODiff:
         tuple
             (buffer_structures, buffer_energies, buffer_forces, weighted_properties)
         """
+
+
+
+        
         # Filter out structures with positive energy
         valid_idx = [i for i, e in enumerate(energies) if e < 0.0]
         valid_data = [data[i] for i in valid_idx]
@@ -622,6 +647,9 @@ class GODiff:
         all_energies.extend(new_energies)
         all_forces.extend(new_forces)
 
+        self.update_adaptive_buffer_size(all_energies, temperature)
+        print(f"Adaptive buffer size for T={temperature:.2f}: {self.buffer_size}")
+        
         # Create buffer for training
         buffer, buffer_energies, buffer_forces, weighted_props = self.get_buffer(
             all_data, all_energies, all_forces, temperature
