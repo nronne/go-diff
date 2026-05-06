@@ -1,3 +1,4 @@
+import time
 import numpy as np
 
 
@@ -22,6 +23,7 @@ class GODiffLogger:
 
     def __init__(self, writer):
         self.writer = writer
+        self._cumulative_wall_s = 0.0
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -55,6 +57,10 @@ class GODiffLogger:
         ess=None,
         ess_ratio=None,
         heat_capacity=None,
+        iteration_wall_s=None,
+        sampling_wall_s=None,
+        evaluation_wall_s=None,
+        training_wall_s=None,
     ):
         """Log all important metrics for a single GO-Diff iteration.
 
@@ -82,6 +88,15 @@ class GODiffLogger:
             ESS / n_new_samples ratio.
         heat_capacity : float or None
             Dimensionless heat capacity C(T) = Var(E) / T^2.
+        iteration_wall_s : float or None
+            Total wall-clock time (seconds) for the full iteration
+            (sampling + evaluation + training).
+        sampling_wall_s : float or None
+            Wall-clock time (seconds) spent in diffusion model inference.
+        evaluation_wall_s : float or None
+            Wall-clock time (seconds) spent calling the energy/force calculator.
+        training_wall_s : float or None
+            Wall-clock time (seconds) spent in model training.
         """
         w = self.writer
 
@@ -165,6 +180,18 @@ class GODiffLogger:
         if heat_capacity is not None:
             w.add_scalar("iteration/heat_capacity", float(heat_capacity), step)
 
+        # --- wall time ---
+        if iteration_wall_s is not None:
+            self._cumulative_wall_s += iteration_wall_s
+            w.add_scalar("timing/iteration_wall_s", float(iteration_wall_s), step)
+            w.add_scalar("timing/cumulative_wall_s", self._cumulative_wall_s, step)
+        if sampling_wall_s is not None:
+            w.add_scalar("timing/sampling_wall_s", float(sampling_wall_s), step)
+        if evaluation_wall_s is not None:
+            w.add_scalar("timing/evaluation_wall_s", float(evaluation_wall_s), step)
+        if training_wall_s is not None:
+            w.add_scalar("timing/training_wall_s", float(training_wall_s), step)
+
     # ------------------------------------------------------------------
     # Training-step level logging
     # ------------------------------------------------------------------
@@ -177,6 +204,9 @@ class GODiffLogger:
         agreement_ema=None,
         agreement_max=None,
         patience_counter=None,
+        step_wall_s=None,
+        step_flops=None,
+        cumulative_flops=None,
     ):
         """Log gradient-agreement metrics at the training-step level.
 
@@ -192,6 +222,14 @@ class GODiffLogger:
             Peak gradient agreement reached so far in this iteration.
         patience_counter : int or None
             Number of steps since the peak agreement was last updated.
+        step_wall_s : float or None
+            Wall-clock time (seconds) for this training step.
+        step_flops : float or None
+            Estimated FLOPs for this training step (profiled via
+            ``torch.profiler`` for the first few steps per iteration; the
+            running mean is used as an estimate for subsequent steps).
+        cumulative_flops : float or None
+            Running total of training FLOPs across all steps so far.
         """
         w = self.writer
         if agreement_current is not None:
@@ -210,3 +248,9 @@ class GODiffLogger:
             w.add_scalar(
                 "train/patience_counter", int(patience_counter), global_step
             )
+        if step_wall_s is not None:
+            w.add_scalar("train/step_wall_s", float(step_wall_s), global_step)
+        if step_flops is not None:
+            w.add_scalar("train/step_flops", float(step_flops), global_step)
+        if cumulative_flops is not None:
+            w.add_scalar("train/cumulative_flops", float(cumulative_flops), global_step)

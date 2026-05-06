@@ -1,3 +1,4 @@
+import time
 import torch
 import numpy as np
 from pathlib import Path
@@ -26,7 +27,7 @@ from agedi.models.conditionings import TimeConditioning
 
 from .temperature_schedule import TemperatureSchedule
 from .sample_controller import SampleController
-from .training_controller import AdaptiveRefinementStop
+from .training_controller import AdaptiveRefinementStop, FlopsAndTimingCallback
 from .logger import GODiffLogger
 
 class GODiff:
@@ -160,6 +161,7 @@ class GODiff:
         self.template = None
         self.confinement = None
         self._godiff_logger = None  # Initialized in run() once the TB writer is available
+        self._flops_timing_cb = None  # Initialized in get_trainer()
         
         # Initialize model and template
         self._init_template(template)
@@ -278,6 +280,10 @@ class GODiff:
         })
 
         # Set up callbacks
+        # FlopsAndTimingCallback is placed after AdaptiveRefinementStop so that
+        # the torch.profiler only captures the real training step, not the extra
+        # backward passes used for gradient-agreement calculation.
+        self._flops_timing_cb = FlopsAndTimingCallback()
         callbacks = [
             LearningRateMonitor(logging_interval="epoch"),
             ModelCheckpoint(
@@ -293,6 +299,7 @@ class GODiff:
                 every_n_epochs=1,
             ),
             self.training_controller,
+            self._flops_timing_cb,
         ]
         
         trainer_kwargs = dict(
@@ -556,14 +563,20 @@ class GODiff:
 
         temperature = self.temperature_schedule.temperature
         new_data, new_energies, new_forces = [], [], []
-        
+        sampling_wall_s = 0.0
+        evaluation_wall_s = 0.0
+
         while self.sample_controller.continue_sampling(new_energies, temperature): # Sample new structures
+            t0 = time.perf_counter()
             data = self.sample(guidance=guidance)
             data = self.check_min_dist(data, min_dist=1.0)
-        
+            sampling_wall_s += time.perf_counter() - t0
+
             # Evaluate energies and forces
+            t0 = time.perf_counter()
             energies, forces = self.evaluate(data)
-            
+            evaluation_wall_s += time.perf_counter() - t0
+
             new_data.extend(data)
             new_energies.extend(energies)
             new_forces.extend(forces)
@@ -616,23 +629,24 @@ class GODiff:
             path=str(logdir/f"buffer_T{temperature:.2f}.traj")
         )
 
-        # Log iteration-level metrics to TensorBoard
-        if self._godiff_logger is not None:
-            self._godiff_logger.log_iteration(
-                iteration,
-                temperature=temperature,
-                new_energies=new_energies,
-                new_forces=new_forces,
-                all_energies=all_energies,
-                all_forces=all_forces,
-                buffer_energies=buffer_energies,
-                buffer_forces=buffer_forces,
-                ess=ess,
-                ess_ratio=ess_ratio,
-                heat_capacity=heat_capacity,
-            )
-        
-        return buffer, weighted_props, all_data, all_energies, all_forces, energy_cut
+        # Build stage_info dict for iteration-level logging in run()
+        # (training_wall_s and iteration_wall_s are added there, after training completes)
+        stage_info = dict(
+            temperature=temperature,
+            new_energies=new_energies,
+            new_forces=new_forces,
+            all_energies=all_energies,
+            all_forces=all_forces,
+            buffer_energies=buffer_energies,
+            buffer_forces=buffer_forces,
+            ess=ess,
+            ess_ratio=ess_ratio,
+            heat_capacity=heat_capacity,
+            sampling_wall_s=sampling_wall_s,
+            evaluation_wall_s=evaluation_wall_s,
+        )
+
+        return buffer, weighted_props, all_data, all_energies, all_forces, energy_cut, stage_info
 
     def train_diffusion_stage(self, temperature, trainer, buffer, weighted_props):
         """Train the diffusion model at a specific temperature."""
@@ -732,6 +746,7 @@ class GODiff:
         # Create the GO-Diff TensorBoard logger and wire it to the training controller
         self._godiff_logger = GODiffLogger(trainer.logger.experiment)
         self.training_controller.set_logger(self._godiff_logger)
+        self._flops_timing_cb.set_logger(self._godiff_logger)
 
         # Initialize trajectory writer for all data
         data_writer = Trajectory(str(logdir/"all_data.traj"), mode='w')
@@ -754,8 +769,10 @@ class GODiff:
             if hasattr(self.diffusion, 'iteration'):
                 self.diffusion.iteration = i
             
+            t_iter_start = time.perf_counter()
+
             # Sample at current temperature
-            buffer, weighted_props, all_data, all_energies, all_forces, energy_cut = self.sample_stage(
+            buffer, weighted_props, all_data, all_energies, all_forces, energy_cut, stage_info = self.sample_stage(
                 i,
                 guidance,
                 all_data,
@@ -771,17 +788,37 @@ class GODiff:
             
             if not buffer:
                 print(f"Warning: Empty buffer at T={temperature}, skipping training")
+                if self._godiff_logger is not None:
+                    elapsed = time.perf_counter() - t_iter_start
+                    self._godiff_logger.log_iteration(
+                        i, **stage_info, iteration_wall_s=elapsed
+                    )
+                i += 1
                 continue
                 
             # Train regressor and diffusion models
+            t_train_start = time.perf_counter()
             if self.force_field_guidance > 0:            
                 self.diffusion, trainer = self.train_regressor_stage(
                     temperature, trainer, all_data, all_energies, all_forces
                 )
 
+            # Reset per-iteration FLOPs profiling counters for the diffusion training stage
+            self._flops_timing_cb.reset()
             self.diffusion, trainer = self.train_diffusion_stage(
                 temperature, trainer, buffer, weighted_props
             )
+            training_wall_s = time.perf_counter() - t_train_start
+            iteration_wall_s = time.perf_counter() - t_iter_start
+
+            # Log all iteration-level metrics (including timing) to TensorBoard
+            if self._godiff_logger is not None:
+                self._godiff_logger.log_iteration(
+                    i,
+                    **stage_info,
+                    training_wall_s=training_wall_s,
+                    iteration_wall_s=iteration_wall_s,
+                )
             
             i += 1
 
