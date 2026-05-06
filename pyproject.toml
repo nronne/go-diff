@@ -15,6 +15,7 @@ dependencies = [
     "rich-click>=1.8.3",
     "schnetpack",
     "AGeDi",
+    "matplotlib",
 ]
 
 
