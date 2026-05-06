@@ -2,9 +2,11 @@ import time
 from collections import defaultdict
 
 import numpy as np
+import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import seaborn as sns
 
 
 class GODiffLogger:
@@ -275,51 +277,60 @@ class GODiffLogger:
             plt.close(fig)
 
         # -----------------------------------------------------------------
-        # Plot 2: buffer energies scatter vs temperature
+        # Plot 2: buffer energies violin vs temperature (seaborn-style)
         # -----------------------------------------------------------------
         if len(self._buffer_history) >= 1:
-            fig, ax = plt.subplots(figsize=(8, 5))
-            rng = np.random.default_rng(seed=step)
-            # Collect all temperatures in sorted order (high → low)
-            temps_sorted = sorted({t for t, _ in self._buffer_history}, reverse=True)
-            cmap = plt.cm.RdYlBu_r
-            colors = {
-                t: cmap(i / max(len(temps_sorted) - 1, 1))
-                for i, t in enumerate(temps_sorted)
-            }
-            # Group energies per temperature (several iterations may share a temperature)
+            # Group energies per temperature across all iterations
             grouped = defaultdict(list)
             for t, e in self._buffer_history:
                 grouped[t].extend(e.tolist())
 
+            temps_sorted = sorted(grouped.keys(), reverse=True)  # high → low
+
+            # Normalise to global min so y-axis starts near 0
+            global_min = min(min(v) for v in grouped.values())
+
+            # Colour map: RdYlBu_r → index 0 = red (high T), index 1 = blue (low T)
+            n_temps = max(len(temps_sorted) - 1, 1)
+            cmap = plt.cm.RdYlBu_r
+            colors = {
+                t: cmap(i / n_temps)
+                for i, t in enumerate(temps_sorted)
+            }
+
+            fig, ax = plt.subplots(figsize=(8, 5))
+
             for t in temps_sorted:
-                energies_t = np.asarray(grouped[t])
-                jitter = rng.uniform(-0.015 * t, 0.015 * t, len(energies_t))
-                ax.scatter(
-                    t + jitter,
-                    energies_t,
-                    alpha=0.5,
-                    s=18,
+                energies_t = np.asarray(grouped[t]) - global_min
+                if len(energies_t) < 2:
+                    # Not enough data for KDE – fall back to a single point
+                    ax.scatter([t], [float(np.mean(energies_t))],
+                               color=colors[t], s=40, zorder=5)
+                    continue
+                x_col = np.full(len(energies_t), t)
+                _df = pd.DataFrame({"temperature": x_col, "energy": energies_t})
+                sns.violinplot(
+                    data=_df,
+                    x="temperature",
+                    y="energy",
+                    ax=ax,
                     color=colors[t],
-                    zorder=2,
-                )
-                mean_e = float(np.mean(energies_t))
-                # Horizontal tick representing the mean
-                ax.scatter(
-                    [t],
-                    [mean_e],
-                    marker="_",
-                    s=400,
-                    linewidths=2.5,
-                    color="black",
-                    zorder=5,
+                    inner="point",
+                    cut=0,
+                    bw_adjust=0.5,
+                    linewidth=0.5,
+                    density_norm="width",
+                    common_norm=True,
+                    native_scale=True,
+                    width=0.2,
                 )
 
             ax.set_xscale("log")
             ax.invert_xaxis()
             ax.set_xlabel("Temperature")
             ax.set_ylabel("Energy [eV]")
-            ax.set_title("Buffer energies vs. temperature\n(horizontal tick = mean)")
+            ax.set_ylim(-0.05, 5)
+            ax.set_title("Buffer energies vs. temperature")
             ax.grid(True, alpha=0.3, which="both")
             fig.tight_layout()
             w.add_figure("analysis/buffer_energies_vs_temperature", fig, global_step=step)

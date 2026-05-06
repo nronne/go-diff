@@ -16,6 +16,7 @@ dependencies = [
     "schnetpack",
     "AGeDi",
     "matplotlib",
+    "seaborn>=0.12.0",
 ]
 
 
