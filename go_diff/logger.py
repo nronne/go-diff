@@ -288,7 +288,7 @@ class GODiffLogger:
             temps_sorted = sorted(grouped.keys(), reverse=True)  # high → low
 
             # Normalise to global min so y-axis starts near 0
-            global_min = min(min(v) for v in grouped.values())
+            # global_min = min(min(v) for v in grouped.values())
 
             # Colour map: RdYlBu_r → index 0 = red (high T), index 1 = blue (low T)
             n_temps = max(len(temps_sorted) - 1, 1)
