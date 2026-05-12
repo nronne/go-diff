@@ -731,13 +731,16 @@ class GODiff:
         # Train diffusion model
         # self.diffusion.regressor_training = False
         trainer.fit(self.diffusion, dataset)
+
+        # keep the regressor model on the same device for the next diffusion training stage
+        self.diffusion = self.diffusion.to(self.device)
         
         # Save checkpoint
         ckpt_path = str(Path(trainer.log_dir) / f"diffusion_model_T{temperature:.2f}.ckpt")
         trainer.save_checkpoint(ckpt_path)
         print(f"Saved diffusion model checkpoint to {ckpt_path}")
 
-        return self.diffusion, trainer
+        return trainer
 
     def train_regressor_stage(self, temperature, trainer, data, energies, forces):
         """Train the regressor model at a specific temperature."""
@@ -770,6 +773,9 @@ class GODiff:
         # Set regressor training mode
         # self.diffusion.regressor_training = True
         trainer.fit(self.diffusion, dataset)
+
+        # keep the regressor model on the same device for the next diffusion training stage
+        self.diffusion = self.diffusion.to(self.device)
         
         # Save checkpoint
         ckpt_path = str(Path(trainer.log_dir) / f"regressor_model_T{temperature:.2f}.ckpt")
@@ -779,7 +785,7 @@ class GODiff:
         # Reset regressor training mode
         # self.diffusion.regressor_training = False
 
-        return self.diffusion, trainer
+        return trainer
 
     def run(self, run_index=0):
         """Run the complete training procedure with temperature annealing."""
@@ -806,6 +812,7 @@ class GODiff:
         # Main training loop across temperatures
         i = 0
         while i < self.max_iterations:
+
             print(f"\n{'='*50}")
             print(f"STAGE {i}")
             print(f"{'='*50}")
@@ -848,13 +855,13 @@ class GODiff:
             # Train regressor and diffusion models
             t_train_start = time.perf_counter()
             if self.force_field_guidance > 0:            
-                self.diffusion, trainer = self.train_regressor_stage(
+                trainer = self.train_regressor_stage(
                     temperature, trainer, all_data, all_energies, all_forces
                 )
 
             # Reset per-iteration FLOPs profiling counters for the diffusion training stage
             self._flops_timing_cb.reset()
-            self.diffusion, trainer = self.train_diffusion_stage(
+            trainer = self.train_diffusion_stage(
                 temperature, trainer, buffer, weighted_props
             )
             training_wall_s = time.perf_counter() - t_train_start
