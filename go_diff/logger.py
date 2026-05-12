@@ -292,7 +292,7 @@ class GODiffLogger:
 
             # Colour map: RdYlBu_r → index 0 = red (high T), index 1 = blue (low T)
             n_temps = max(len(temps_sorted) - 1, 1)
-            cmap = plt.cm.RdYlBu_r
+            cmap = plt.cm.RdYlBu
             colors = {
                 t: cmap(i / n_temps)
                 for i, t in enumerate(temps_sorted)
@@ -320,6 +320,7 @@ class GODiffLogger:
                     bw_adjust=0.5,
                     linewidth=0.5,
                     density_norm="width",
+                    split=True,
                     common_norm=True,
                     native_scale=True,
                     width=0.2,

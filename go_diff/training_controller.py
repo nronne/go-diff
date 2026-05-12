@@ -4,6 +4,97 @@ from lightning.pytorch.callbacks import Callback
 from torch.nn.functional import cosine_similarity
 from torch_geometric.data import Batch
 
+
+class MomentumConsensusStop(Callback):
+    def __init__(self, min_steps=40, patience=20, drop_factor=0.5):
+        """
+        Args:
+            min_steps: Minimum steps to allow for momentum to build up.
+            patience: How many steps to wait after agreement starts dropping.
+            drop_factor: Stop if agreement falls below (drop_factor * max_agreement).
+        """
+        super().__init__()
+        self.min_steps = min_steps
+        self.patience = patience
+        self.drop_factor = drop_factor
+        
+        self.max_agreement = -1.0
+        self.patience_counter = 0
+        self.current_step = 0
+
+        # Optional GODiffLogger for TensorBoard logging
+        self._godiff_logger = None
+
+    def set_logger(self, logger):
+        """Attach a GODiffLogger so agreement metrics are written to TensorBoard."""
+        self._godiff_logger = logger
+
+
+    def on_after_backward(self, trainer, pl_module):
+        """
+        Called immediately after loss.backward(). 
+        Gradients are now available in pl_module.parameters().
+        """
+        self.current_step += 1
+        if self.current_step < self.min_steps:
+            return
+
+        # 1. Pull the optimizer (to access momentum states)
+        # In manual optimization, you might have multiple; we'll take the first.
+        opt = trainer.optimizers[0]
+        
+        grads = []
+        momentums = []
+        
+        for p in pl_module.parameters():
+            if p.grad is not None:
+                # 'exp_avg' is the first moment (moving average) in Adam/AdamW
+                state = opt.state[p]
+                if 'exp_avg' in state:
+                    grads.append(p.grad.detach().view(-1))
+                    momentums.append(state['exp_avg'].detach().view(-1))
+
+        if not grads or not momentums:
+            return
+
+        # 2. Vectorized Consensus Calculation
+        g = torch.cat(grads)
+        m = torch.cat(momentums)
+        
+        # Cosine similarity measures if the new gradient aligns with the trend
+        agreement = torch.nn.functional.cosine_similarity(g, m, dim=0).item()
+
+        # 3. Peak-to-Drop Logic
+        if agreement > self.max_agreement:
+            self.max_agreement = agreement
+            self.patience_counter = 0
+        else:
+            self.patience_counter += 1
+
+        # 4. Stopping logic
+        if (self.patience_counter >= self.patience and 
+            agreement < (self.drop_factor * self.max_agreement)):
+            
+            print(f"\n[Adaptive Stop] Consensus reached. "
+                  f"Peak Agreement: {self.max_agreement:.3f} | Current: {agreement:.3f}")
+            trainer.should_stop = True
+
+        if self._godiff_logger is not None:
+            self._godiff_logger.log_training_step(
+                trainer.global_step,
+                agreement_current=agreement,
+                agreement_max=self.max_agreement,
+                patience_counter=self.patience_counter,
+            )
+            
+        
+    def on_train_start(self, trainer, pl_module):
+        """Reset state at the start of every GO-Diff iteration."""
+        self.max_agreement = -1.0
+        self.patience_counter = 0
+        self.current_step = 0
+        
+
 class AdaptiveRefinementStop(Callback):
     def __init__(self, min_steps=100, patience=50, smooth_factor=0.75, check_interval=1):
         """
@@ -34,7 +125,10 @@ class AdaptiveRefinementStop(Callback):
     def on_train_batch_start(self, trainer, pl_module, batch, batch_idx):
         if trainer.global_step < self.min_steps or trainer.global_step % self.check_interval != 0:
             return
-        
+
+        if len(batch) < 4:
+            return
+
         # 1. Calculate current agreement (using the split logic from before)
         current_agreement = self._calculate_split_agreement(trainer, pl_module, batch, batch_idx)
         
@@ -70,8 +164,6 @@ class AdaptiveRefinementStop(Callback):
         # 1. Split the batch into two independent halves
         # Assumes batch is (x, energies) or similar. Adapt if your batch structure differs.
         half = len(batch) // 2
-        if half < 2: return # Need at least 2 samples per side
-
 
         opt = trainer.optimizers[0]
         # 2. Calculate Gradient A (First Half)
@@ -82,7 +174,7 @@ class AdaptiveRefinementStop(Callback):
 
         # 3. Calculate Gradient B (Second Half)
         pl_module.zero_grad()
-        loss_b = pl_module.loss(Batch.from_data_list(batch[:half]), batch_idx)
+        loss_b = pl_module.loss(Batch.from_data_list(batch[half:]), batch_idx)
         trainer.strategy.backward(loss_b["loss"], optimizer=opt)
         grad_b = self._get_flat_grad(pl_module)
 
@@ -110,7 +202,7 @@ class AdaptiveRefinementStop(Callback):
         self.ema_agreement = 0.0
         self.max_agreement = -1.0
         self.patience_counter = 0
-        self.min_steps = trainer.current_epoch + self._min_steps
+        self.min_steps = trainer.global_step + self._min_steps
 
 
 class FlopsAndTimingCallback(Callback):

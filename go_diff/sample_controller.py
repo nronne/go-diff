@@ -3,9 +3,10 @@ import numpy as np
 class SampleController:
     def __init__(
         self, 
-        initial_N=64, 
-        max_N=256, 
-        target_ess_ratio=0.5, 
+        initial_N=32, 
+        max_N=64, 
+        # target_ess_ratio=0.5,
+        target_ess=16,
     ):
         """
         Args:
@@ -18,20 +19,24 @@ class SampleController:
         """
         self.initial_N = initial_N
         self.max_N = max_N
-        self.target_ess_ratio = target_ess_ratio
+        # self.target_ess_ratio = target_ess_ratio
+        self.target_ess = target_ess
 
     def calculate_ess(self, energies, temperature):
-        """Calculates Effective Sample Size from Boltzmann weights."""
-        if len(energies) == 0:
-            return 0
-        
-        # Calculate weights: w = exp(-E/T) / sum(exp(-E/T))
-        # Use softmax for numerical stability
         energies = np.array(energies)
-        e = np.exp(-energies/temperature)
+
+        # 1. Shift for stability: subtract the minimum energy
+        # This prevents np.exp() from blowing up to infinity.
+        shifted_energies = (energies - np.min(energies)) / temperature
+
+        # 2. Compute unnormalized weights
+        # The largest value will be exp(0) = 1
+        e = np.exp(-shifted_energies)
+
+        # 3. Normalize to get probabilities
         weights = e / np.sum(e)
-        
-        # ESS = 1 / sum(w^2)
+
+        # 4. Effective Sample Size (ESS)
         ess = 1.0 / np.sum(weights**2)
         return ess
 
@@ -50,15 +55,16 @@ class SampleController:
             
         """Determines whether to continue sampling based on ESS ratio."""
         current_ess = self.calculate_ess(energies, temperature)
-        current_ess_ratio = current_ess / len(energies)
+        # current_ess_ratio = current_ess / len(energies)
         
         # Continue sampling if ESS ratio is below target
-        continue_sampling = current_ess_ratio < self.target_ess_ratio
+        # continue_sampling = current_ess_ratio < self.target_ess_ratio
+        continue_sampling = current_ess < self.target_ess
         
         if continue_sampling:
-            print(f"Continue sampling: ESS ratio {current_ess_ratio:.3f} does not meet target of {self.target_ess_ratio}.")                  
+            print(f"Continue sampling: ESS {current_ess:.3f} does not meet target of {self.target_ess}.")                  
         else:
-            print(f"Stopping sampling: ESS ratio {current_ess_ratio:.3f} meets target.")
+            print(f"Stopping sampling: ESS ratio {current_ess:.3f} meets target.")
         
             
         return continue_sampling

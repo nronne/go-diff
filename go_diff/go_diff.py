@@ -27,7 +27,7 @@ from agedi.models.conditionings import TimeConditioning
 
 from .temperature_schedule import TemperatureSchedule
 from .sample_controller import SampleController
-from .training_controller import AdaptiveRefinementStop, FlopsAndTimingCallback
+from .training_controller import AdaptiveRefinementStop, MomentumConsensusStop, FlopsAndTimingCallback
 from .logger import GODiffLogger
 
 class GODiff:
@@ -44,7 +44,7 @@ class GODiff:
                  max_steps_per_loop=10_000,
                  temperature_schedule=TemperatureSchedule(),
                  sample_controller=SampleController(),
-                 training_controller=AdaptiveRefinementStop(),
+                 training_controller=MomentumConsensusStop(), #AdaptiveRefinementStop(),
                  max_iterations=1000,
                  samples_batch_size=16,
                  initial_buffer_size=64,
@@ -317,7 +317,7 @@ class GODiff:
 
         return Trainer(**trainer_kwargs)
     
-    def sample(self, guidance=None, progress_bar=False):
+    def sample(self, guidance=None, progress_bar=False, timings=False):
         """Sample structures using the diffusion model.
         
         Parameters:
@@ -358,6 +358,7 @@ class GODiff:
                     force_threshold=self.force_threshold,
                     max_extra_steps=self.max_extra_steps,
                 ),
+                print_timings=timings,
             )
 
         atoms_list = [g.to_atoms() for g in graph_list]
@@ -387,13 +388,16 @@ class GODiff:
         """
         energies = []
         forces_list = []
+        constrained_forces_list = []
         
         for atoms in atoms_list:
             atoms.calc = self.calculator
             energies.append(atoms.get_potential_energy())
             forces_list.append(atoms.get_forces(apply_constraint=False))
+            constrained_forces_list.append(atoms.get_forces(apply_constraint=True))
             
-        return np.array(energies), forces_list
+            
+        return np.array(energies), forces_list, constrained_forces_list
     
     def check_min_dist(self, atoms_list, min_dist=1.0):
         """Filter out structures with too small interatomic distances.
@@ -448,7 +452,26 @@ class GODiff:
             properties.append({'weight': w, 'forces': f})
 
         return properties
-    
+
+    def calculate_ess(self, energies, temperature):
+        energies = np.array(energies)
+
+        # 1. Shift for stability: subtract the minimum energy
+        # This prevents np.exp() from blowing up to infinity.
+        shifted_energies = (energies - np.min(energies)) / temperature
+
+        # 2. Compute unnormalized weights
+        # The largest value will be exp(0) = 1
+        e = np.exp(-shifted_energies)
+
+        # 3. Normalize to get probabilities
+        weights = e / np.sum(e)
+
+        # 4. Effective Sample Size (ESS)
+        ess = 1.0 / np.sum(weights**2)
+
+        return ess
+
     def save_trajectory(self, atoms_list, energies, forces, path=None, writer=None):
         """Save structures to a trajectory file.
         
@@ -486,23 +509,13 @@ class GODiff:
         if path is not None:
             write(path, traj)
 
-    def update_adaptive_buffer_size(self, energies, temperature, min_B=16, max_B=1000):
-        # 1. Calculate weights
-        energies = np.array(energies)
-        # Scale and shift energies for numerical stability
-        Es_scaled = -energies / temperature
-        Es_shifted = Es_scaled - np.max(Es_scaled)
-        exp_Es = np.exp(Es_shifted)
-        weights = exp_Es / np.sum(exp_Es) * len(energies)
-
-        # 2. Calculate Effective Sample Size
-        ess = 1.0 / np.sum(weights**2)
-
-        # 3. Scale buffer size (Example: B should be roughly 10x the effective diversity)
-        target_B = int(ess.item() * 10)
+    def update_adaptive_buffer_size(self, energies, temperature, min_B=16, max_B=512):
+        ess = self.sample_controller.calculate_ess(energies, temperature)
+        target_B = int(ess)
+        print(f"ESS: {ess:.2f}, Target Buffer Size: {target_B}")
 
         # 4. Smooth the update (Moving Average) to prevent jitter
-        new_B = 0.9 * self.buffer_size + 0.1 * target_B
+        new_B = 0.8 * self.buffer_size + 0.2 * target_B
 
         self.buffer_size = int(np.clip(new_B, min_B, max_B))
 
@@ -561,17 +574,16 @@ class GODiff:
         
         return buffer_data, buffer_energies, buffer_forces, buffer_props
 
-    def _min_energy_filter(self, data, energies, forces):
+    def _min_energy_filter(self, data, energies, forces, constrained_forces):
         valid_idx = [i for i, e in enumerate(energies) if e > self.min_E]
         filtered_data = [data[i] for i in valid_idx]
         filtered_energies = [energies[i] for i in valid_idx]
         filtered_forces = [forces[i] for i in valid_idx]
+        filtered_constrained_forces = [constrained_forces[i] for i in valid_idx]
 
-        return filtered_data, filtered_energies, filtered_forces
-
-
+        return filtered_data, filtered_energies, filtered_forces, filtered_constrained_forces
     
-    def sample_stage(self, iteration, guidance, all_data, all_energies, all_forces,
+    def sample_stage(self, iteration, guidance, all_data, all_energies, all_forces, all_constrained_forces,
                      energy_cut, data_writer, logdir):
         """Run a sampling stage at a specific temperature.
 
@@ -597,26 +609,27 @@ class GODiff:
         """
 
         temperature = self.temperature_schedule.temperature
-        new_data, new_energies, new_forces = [], [], []
+        new_data, new_energies, new_forces, new_constrained_forces = [], [], [], []
         sampling_wall_s = 0.0
         evaluation_wall_s = 0.0
 
         while self.sample_controller.continue_sampling(new_energies, temperature): # Sample new structures
             t0 = time.perf_counter()
-            data = self.sample(guidance=guidance)
+            data = self.sample(guidance=guidance, timings=True)
             data = self.check_min_dist(data, min_dist=1.0)
             sampling_wall_s += time.perf_counter() - t0
 
             # Evaluate energies and forces
             t0 = time.perf_counter()
-            energies, forces = self.evaluate(data)
+            energies, forces, constrained_forces = self.evaluate(data)
             evaluation_wall_s += time.perf_counter() - t0
 
-            data, energy, forces = self._min_energy_filter(data, energies, forces)
+            data, energies, forces, constrained_forces = self._min_energy_filter(data, energies, forces, constrained_forces)
             
             new_data.extend(data)
             new_energies.extend(energies)
             new_forces.extend(forces)
+            new_constrained_forces.extend(constrained_forces)
 
         name = f"{temperature:.3f}" if temperature is not None else "initial"
         self.save_trajectory(
@@ -646,6 +659,7 @@ class GODiff:
         all_data.extend(new_data)
         all_energies.extend(new_energies)
         all_forces.extend(new_forces)
+        all_constrained_forces.extend(new_constrained_forces)
 
         self.update_adaptive_buffer_size(all_energies, temperature)
         print(f"Adaptive buffer size for T={temperature:.2f}: {self.buffer_size}")
@@ -668,7 +682,7 @@ class GODiff:
         stage_info = dict(
             temperature=temperature,
             new_energies=new_energies,
-            new_forces=new_forces,
+            new_forces=new_constrained_forces,
             all_energies=all_energies,
             all_forces=all_forces,
             buffer_energies=buffer_energies,
@@ -680,7 +694,7 @@ class GODiff:
             evaluation_wall_s=evaluation_wall_s,
         )
 
-        return buffer, weighted_props, all_data, all_energies, all_forces, energy_cut, stage_info
+        return buffer, weighted_props, all_data, all_energies, all_forces, all_constrained_forces, energy_cut, stage_info
 
     def train_diffusion_stage(self, temperature, trainer, buffer, weighted_props):
         """Train the diffusion model at a specific temperature."""
@@ -695,7 +709,7 @@ class GODiff:
         current_epoch = trainer.current_epoch
         trainer.fit_loop.max_epochs = current_epoch + epochs_to_add
         
-        self.training_controller.reset(trainer)
+        # self.training_controller.reset(trainer)
         
         print(f"Training for {epochs_to_add} epochs ({steps_per_epoch} steps/epoch)")
 
@@ -786,7 +800,7 @@ class GODiff:
         data_writer = Trajectory(str(logdir/"all_data.traj"), mode='w')
 
         # Initialize storage for accumulated data
-        all_data, all_energies, all_forces = [], [], []
+        all_data, all_energies, all_forces, all_constrained_forces = [], [], [], []
         energy_cut = 0.0
         
         # Main training loop across temperatures
@@ -806,12 +820,13 @@ class GODiff:
             t_iter_start = time.perf_counter()
 
             # Sample at current temperature
-            buffer, weighted_props, all_data, all_energies, all_forces, energy_cut, stage_info = self.sample_stage(
+            buffer, weighted_props, all_data, all_energies, all_forces, all_constrained_forces, energy_cut, stage_info = self.sample_stage(
                 i,
                 guidance,
                 all_data,
                 all_energies,
                 all_forces,
+                all_constrained_forces,
                 energy_cut,
                 data_writer,
                 logdir
