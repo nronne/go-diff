@@ -1,6 +1,6 @@
 import numpy as np
 
-class TemperatureSchedule:
+class TemperatureController:
     def __init__(self, k=1.0, fast=0.5, slow=0.95):
         self.k = k
         self.fast = fast
