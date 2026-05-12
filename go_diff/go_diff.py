@@ -684,7 +684,7 @@ class GODiff:
             new_energies=new_energies,
             new_forces=new_constrained_forces,
             all_energies=all_energies,
-            all_forces=all_forces,
+            all_forces=all_constrained_forces,
             buffer_energies=buffer_energies,
             buffer_forces=buffer_forces,
             ess=ess,

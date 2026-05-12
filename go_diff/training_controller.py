@@ -6,7 +6,7 @@ from torch_geometric.data import Batch
 
 
 class MomentumConsensusStop(Callback):
-    def __init__(self, min_steps=40, patience=20, drop_factor=0.5):
+    def __init__(self, min_steps=50, patience=100, drop_factor=0.5):
         """
         Args:
             min_steps: Minimum steps to allow for momentum to build up.
