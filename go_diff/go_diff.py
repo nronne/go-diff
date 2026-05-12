@@ -250,8 +250,8 @@ class GODiff:
 
         Returns
         -------
-        np.ndarray of float, shape (N,)
-            Boltzmann importance weights, summing to N.
+        np.ndarray of float, shape ``(len(data),)``
+            Boltzmann importance weights, summing to ``len(data)``.
         """
         temperature = self.temperature_schedule.get_temperature()
         energies = np.array([atoms.get_potential_energy() for atoms in data])

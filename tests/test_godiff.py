@@ -21,7 +21,7 @@ from go_diff.go_diff import GODiff
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_atoms(energy: float, n: int = 3) -> "ase.Atoms":
+def _make_atoms(energy: float, n: int = 3) -> "Atoms":
     """Return an ASE Atoms object with a SinglePointCalculator attached."""
     from ase import Atoms
     from ase.calculators.singlepoint import SinglePointCalculator as SPC
