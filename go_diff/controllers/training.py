@@ -1,4 +1,10 @@
+"""Lightning callbacks that control training duration in GO-Diff."""
+
+from __future__ import annotations
+
 import time
+from typing import Any
+
 import torch
 from lightning.pytorch.callbacks import Callback
 from torch.nn.functional import cosine_similarity
@@ -6,34 +12,62 @@ from torch_geometric.data import Batch
 
 
 class MomentumConsensusStop(Callback):
-    def __init__(self, min_steps=50, patience=100, drop_factor=0.5):
-        """
-        Args:
-            min_steps: Minimum steps to allow for momentum to build up.
-            patience: How many steps to wait after agreement starts dropping.
-            drop_factor: Stop if agreement falls below (drop_factor * max_agreement).
-        """
+    """Stop training when gradient momentum and current gradient diverge.
+
+    After an initial warm-up phase (*min_steps*) the callback computes the
+    cosine similarity between the current gradient and the first-moment
+    estimate stored by the Adam/AdamW optimiser.  Training is halted when
+    agreement has been below ``drop_factor × peak_agreement`` for *patience*
+    consecutive steps.
+
+    Parameters
+    ----------
+    min_steps : int
+        Minimum number of training steps before the stopping criterion is
+        evaluated.  Default: 50.
+    patience : int
+        Number of consecutive steps below the drop threshold before training
+        is stopped.  Default: 100.
+    drop_factor : float
+        Fraction of the peak agreement that the current agreement must fall
+        below (for *patience* steps) to trigger early stopping.  Default: 0.5.
+    """
+
+    def __init__(
+        self,
+        min_steps: int = 50,
+        patience: int = 100,
+        drop_factor: float = 0.5,
+    ) -> None:
         super().__init__()
         self.min_steps = min_steps
         self.patience = patience
         self.drop_factor = drop_factor
-        
-        self.max_agreement = -1.0
-        self.patience_counter = 0
-        self.current_step = 0
+
+        self.max_agreement: float = -1.0
+        self.patience_counter: int = 0
+        self.current_step: int = 0
 
         # Optional GODiffLogger for TensorBoard logging
         self._godiff_logger = None
 
-    def set_logger(self, logger):
-        """Attach a GODiffLogger so agreement metrics are written to TensorBoard."""
+    def set_logger(self, logger: Any) -> None:
+        """Attach a GODiffLogger so agreement metrics are written to TensorBoard.
+
+        Parameters
+        ----------
+        logger : GODiffLogger
+            Logger instance to receive per-step metrics.
+        """
         self._godiff_logger = logger
 
+    def on_after_backward(self, trainer: Any, pl_module: Any) -> None:
+        """Evaluate momentum–gradient agreement after each backward pass.
 
-    def on_after_backward(self, trainer, pl_module):
-        """
-        Called immediately after loss.backward(). 
-        Gradients are now available in pl_module.parameters().
+        Gradients are available in ``pl_module.parameters()`` at this point.
+        Computes the cosine similarity between the current gradient vector and
+        the Adam first-moment (momentum) vector and triggers early stopping
+        when the agreement has been low for *patience* steps.
         """
         self.current_step += 1
         if self.current_step < self.min_steps:
@@ -88,41 +122,75 @@ class MomentumConsensusStop(Callback):
             )
             
         
-    def on_train_start(self, trainer, pl_module):
-        """Reset state at the start of every GO-Diff iteration."""
+    def on_train_start(self, trainer: Any, pl_module: Any) -> None:
+        """Reset internal state at the start of each GO-Diff training stage."""
         self.max_agreement = -1.0
         self.patience_counter = 0
         self.current_step = 0
-        
+
 
 class AdaptiveRefinementStop(Callback):
-    def __init__(self, min_steps=100, patience=50, smooth_factor=0.75, check_interval=1):
-        """
-        Args:
-            min_steps: Minimum global steps before starting to check for stopping.
-            patience: Number of consecutive checks with low agreement before stopping.
-            smooth_factor: EMA smoothing factor for agreement tracking (0 < smooth_factor < 1).
-            check_interval: How often (in steps) to check the agreement.
-        """
+    """Stop training when the gradient-agreement EMA has significantly dropped.
+
+    Computes gradient agreement by splitting each mini-batch into two halves,
+    running independent backward passes, and measuring the cosine similarity of
+    the resulting gradient vectors.  Training stops when the exponential moving
+    average (EMA) of the agreement has peaked and then fallen to less than half
+    its peak value for *patience* consecutive check-points.
+
+    Parameters
+    ----------
+    min_steps : int
+        Global training step at which checking begins.  Default: 100.
+    patience : int
+        Number of consecutive low-agreement check-points before stopping.
+        Default: 50.
+    smooth_factor : float
+        EMA smoothing coefficient (between 0 and 1).  Higher values give a
+        smoother but more lagging estimate.  Default: 0.75.
+    check_interval : int
+        Interval in training steps between agreement evaluations.  Default: 1.
+    """
+
+    def __init__(
+        self,
+        min_steps: int = 100,
+        patience: int = 50,
+        smooth_factor: float = 0.75,
+        check_interval: int = 1,
+    ) -> None:
         super().__init__()
         self._min_steps = min_steps
         self.min_steps = min_steps
         self.patience = patience
         self.smooth_factor = smooth_factor
         self.check_interval = check_interval
-        
-        self.ema_agreement = 0.0
-        self.max_agreement = -1.0
-        self.patience_counter = 0
+
+        self.ema_agreement: float = 0.0
+        self.max_agreement: float = -1.0
+        self.patience_counter: int = 0
 
         # Optional GODiffLogger for TensorBoard logging
         self._godiff_logger = None
 
-    def set_logger(self, logger):
-        """Attach a GODiffLogger so agreement metrics are written to TensorBoard."""
+    def set_logger(self, logger: Any) -> None:
+        """Attach a GODiffLogger so agreement metrics are written to TensorBoard.
+
+        Parameters
+        ----------
+        logger : GODiffLogger
+            Logger instance to receive per-step metrics.
+        """
         self._godiff_logger = logger
 
-    def on_train_batch_start(self, trainer, pl_module, batch, batch_idx):
+    def on_train_batch_start(
+        self,
+        trainer: Any,
+        pl_module: Any,
+        batch: Any,
+        batch_idx: int,
+    ) -> None:
+        """Evaluate gradient agreement and optionally stop training."""
         if trainer.global_step < self.min_steps or trainer.global_step % self.check_interval != 0:
             return
 
@@ -160,9 +228,29 @@ class AdaptiveRefinementStop(Callback):
                   f"and dropped to {self.ema_agreement:.4f}. Stopping.")
             trainer.should_stop = True
             
-    def _calculate_split_agreement(self, trainer, pl_module, batch, batch_idx):
+    def _calculate_split_agreement(
+        self,
+        trainer: Any,
+        pl_module: Any,
+        batch: Any,
+        batch_idx: int,
+    ) -> float:
+        """Compute gradient cosine similarity by splitting the batch in two.
+
+        Parameters
+        ----------
+        trainer : lightning.Trainer
+        pl_module : lightning.LightningModule
+        batch : list
+            Current mini-batch (list of graph data objects).
+        batch_idx : int
+
+        Returns
+        -------
+        float
+            Cosine similarity between the two half-batch gradients.
+        """
         # 1. Split the batch into two independent halves
-        # Assumes batch is (x, energies) or similar. Adapt if your batch structure differs.
         half = len(batch) // 2
 
         opt = trainer.optimizers[0]
@@ -188,8 +276,8 @@ class AdaptiveRefinementStop(Callback):
 
 
 
-    def _get_flat_grad(self, pl_module):
-        """Helper to flatten all model gradients into a single vector."""
+    def _get_flat_grad(self, pl_module: Any) -> torch.Tensor:
+        """Flatten all model gradients into a single 1-D tensor."""
         grads = []
         for param in pl_module.parameters():
             if param.grad is not None:
@@ -197,8 +285,12 @@ class AdaptiveRefinementStop(Callback):
         return torch.cat(grads) if grads else torch.tensor([])
 
 
-    def reset(self, trainer):
-        """Resets the internal state of the callback."""
+    def reset(self, trainer: Any) -> None:
+        """Reset internal state; *min_steps* is offset by the current global step.
+
+        Call this at the start of each new GO-Diff training stage so that the
+        warm-up period is restarted relative to the current Lightning global step.
+        """
         self.ema_agreement = 0.0
         self.max_agreement = -1.0
         self.patience_counter = 0

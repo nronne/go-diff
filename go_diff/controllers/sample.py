@@ -1,70 +1,108 @@
+"""Sampling controller for GO-Diff: decides when enough structures have been
+collected based on the Effective Sample Size (ESS)."""
+
+from __future__ import annotations
+
 import numpy as np
+from numpy.typing import ArrayLike
+
 
 class SampleController:
+    """Controls how many structures to sample per GO-Diff iteration.
+
+    Sampling continues until either the ESS reaches *target_ess* or the total
+    number of structures reaches *max_N*.  On the very first iteration
+    (temperature = ``None``) sampling continues until *initial_N* structures
+    are collected.
+
+    Parameters
+    ----------
+    initial_N : int
+        Minimum (and default) number of structures to sample when no
+        temperature is available (first iteration).  Default: 32.
+    max_N : int
+        Hard upper limit on the number of structures per iteration.
+        Default: 64.
+    target_ess : float
+        Target Effective Sample Size.  Sampling stops once the ESS computed
+        from the current structures exceeds this value.  Default: 16.
+    """
+
     def __init__(
-        self, 
-        initial_N=32, 
-        max_N=64, 
-        # target_ess_ratio=0.5,
-        target_ess=16,
-    ):
-        """
-        Args:
-            initial_N: Starting number of samples.
-            min_N: Minimum samples allowed (hardware/budget floor).
-            max_N: Maximum samples allowed (VRAM/compute ceiling).
-            target_ess_ratio: Ideal ratio of ESS to N (usually 0.1 - 0.4).
-            growth_factor: Multiplier to increase N.
-            shrink_factor: Multiplier to decrease N.
-        """
+        self,
+        initial_N: int = 32,
+        max_N: int = 64,
+        target_ess: float = 16,
+    ) -> None:
         self.initial_N = initial_N
         self.max_N = max_N
-        # self.target_ess_ratio = target_ess_ratio
         self.target_ess = target_ess
 
-    def calculate_ess(self, energies, temperature):
-        energies = np.array(energies)
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
-        # 1. Shift for stability: subtract the minimum energy
-        # This prevents np.exp() from blowing up to infinity.
-        shifted_energies = (energies - np.min(energies)) / temperature
+    def calculate_ess(self, energies: ArrayLike, temperature: float) -> float:
+        """Compute the Effective Sample Size for Boltzmann weights.
 
-        # 2. Compute unnormalized weights
-        # The largest value will be exp(0) = 1
-        e = np.exp(-shifted_energies)
+        Parameters
+        ----------
+        energies : array-like of float
+            Scalar potential energies (eV).
+        temperature : float
+            Current annealing temperature.
 
-        # 3. Normalize to get probabilities
+        Returns
+        -------
+        float
+            The ESS.
+        """
+        energies = np.asarray(energies, dtype=float)
+        # Shift for numerical stability (largest weight = exp(0) = 1)
+        shifted = (energies - np.min(energies)) / temperature
+        e = np.exp(-shifted)
         weights = e / np.sum(e)
+        return float(1.0 / np.sum(weights ** 2))
 
-        # 4. Effective Sample Size (ESS)
-        ess = 1.0 / np.sum(weights**2)
-        return ess
+    def continue_sampling(
+        self,
+        energies: list[float],
+        temperature: float | None = None,
+    ) -> bool:
+        """Decide whether to sample more structures.
 
-    def continue_sampling(self, energies, temperature=None):
+        Parameters
+        ----------
+        energies : list of float
+            Energies of structures collected so far in the current iteration.
+        temperature : float or None
+            Current annealing temperature.  ``None`` indicates the first
+            iteration (no Boltzmann weighting yet).
+
+        Returns
+        -------
+        bool
+            ``True`` if more structures should be sampled.
+        """
         if len(energies) == 0:
             return True
 
         if len(energies) >= self.max_N:
             return False
-        
+
         if temperature is None:
-            if len(energies) <= self.initial_N:
-                return True
-            else:
-                return False
-            
-        """Determines whether to continue sampling based on ESS ratio."""
+            keep_going = len(energies) < self.initial_N
+            return keep_going
+
         current_ess = self.calculate_ess(energies, temperature)
-        # current_ess_ratio = current_ess / len(energies)
-        
-        # Continue sampling if ESS ratio is below target
-        # continue_sampling = current_ess_ratio < self.target_ess_ratio
-        continue_sampling = current_ess < self.target_ess
-        
-        if continue_sampling:
-            print(f"Continue sampling: ESS {current_ess:.3f} does not meet target of {self.target_ess}.")                  
-        else:
-            print(f"Stopping sampling: ESS ratio {current_ess:.3f} meets target.")
-        
-            
-        return continue_sampling
+
+        if current_ess < self.target_ess:
+            print(
+                f"Continue sampling: ESS {current_ess:.3f} does not meet "
+                f"target of {self.target_ess}."
+            )
+            return True
+
+        print(f"Stopping sampling: ESS {current_ess:.3f} meets target.")
+        return False
+
