@@ -7,7 +7,7 @@ from mace.calculators import mace_mp
 from agedi import create_diffusion
 
 from go_diff import GODiff
-from go_diff.controllors import SampleController, TemperatureController, MomentumConsensusStop
+from go_diff.controllers import SampleController, TemperatureSchedule, MomentumConsensusStop
 from go_diff.noisers import WeightedPositions
 
 parser = ArgumentParser(description="Train a diffusion model for GO tasks.")
@@ -34,7 +34,7 @@ calc = mace_mp(model="medium", dispersion=False, default_dtype="float32", device
 
 ##### TEMPLATE #####
 template = surface('Pt', (1,2,2), 5, vacuum=8.0)
-template.positions[:, 2] -= atoms.positions[:, 2].min()
+template.positions[:, 2] -= template.positions[:, 2].min()
 
 confinement = list(confinement_above_zmax + template.positions[:, 2].max())
 
