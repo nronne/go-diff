@@ -87,8 +87,10 @@ class GODiff:
         dataset_config: dict | None = None,
         initial_buffer_size: int = 16,
         batch_size: int = 32,
+        sample_batch_size: int = 16,
         max_steps_per_loop: int = 500,
         min_E: float = -500.0,
+        log_dir: str | Path | None = None,
         device: str = "cuda",
     ) -> None:
         self.calculator = calculator
@@ -102,8 +104,10 @@ class GODiff:
 
         self.buffer_size: int = initial_buffer_size
         self.batch_size: int = batch_size
+        self.sample_batch_size: int = sample_batch_size
         self.max_steps_per_loop: int = max_steps_per_loop
         self.min_E: float = min_E
+        self.log_dir: str | Path = log_dir if log_dir is not None else "logs"
         self.device: str = device
 
         self._godiff_logger: GODiffLogger | None = None
@@ -136,6 +140,7 @@ class GODiff:
         self.trainer = create_trainer(
             max_time={"hours": max_time_hours},
             extra_callbacks=callbacks,
+            log_dir=self.log_dir
         )
 
     # ------------------------------------------------------------------
@@ -154,7 +159,12 @@ class GODiff:
         list of ase.Atoms
             Sampled structures.
         """
-        atoms_list: list[Atoms] = sample(self.diffusion, **self.sample_config)
+        if "n_samples" in self.sample_config:
+            n_samples = self.sample_config.pop("n_samples")
+        else:
+            n_samples = self.sample_batch_size
+
+        atoms_list = sample(self.diffusion, n_samples=n_samples, **self.sample_config)
 
         template = self.sample_config.get("template")
         if template is not None:
@@ -335,8 +345,9 @@ class GODiff:
         if path is None and writer is None:
             raise ValueError("Either path or writer must be provided.")
 
-        traj = [atoms.copy() for atoms in atoms_list]
-        energies = [atoms.get_potential_energy() for atoms in traj]
+
+        energies = [atoms.get_potential_energy() for atoms in atoms_list]
+        traj = [atoms.copy() for atoms in atoms_list]        
         argsort = np.argsort(energies)
         traj = [traj[i] for i in argsort]
 
@@ -547,7 +558,7 @@ class GODiff:
         )
 
         stage_info = dict(
-            temperature=current_temperature,
+            temperature=self.temperature_schedule.temperature,
             new_energies=new_energies,
             new_forces=new_forces,
             all_energies=all_energies,

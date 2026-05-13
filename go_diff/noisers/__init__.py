@@ -1,1 +1,1 @@
-from .weighted_pos import WeightedPositions
+from .weighted_pos import WeightedConfinedCellPositions

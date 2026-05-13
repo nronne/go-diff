@@ -1,17 +1,18 @@
 import torch
 from typing import Dict
-from agedi.diffusion.noisers import Positions
+from agedi.diffusion.noisers import ConfinedCellPositions
 
 from typing import Dict
 from agedi.data import AtomsGraph
 
 
 
-class WeightedPositions(Positions):
+class WeightedConfinedCellPositions(ConfinedCellPositions):
     """
     Assumes that the batch has attribute `weight`.
     
     """
+    _key = "pos"
     
     def _loss(self, batch: AtomsGraph) -> torch.Tensor:
         """Computes the loss for the weighted positions noiser.
