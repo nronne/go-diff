@@ -85,6 +85,7 @@ class GODiff:
         training_controller: Any | None = None,
         sample_config: dict | None = None,
         dataset_config: dict | None = None,
+        trainer_config: dict | None = None,
         initial_buffer_size: int = 16,
         batch_size: int = 32,
         sample_batch_size: int = 16,
@@ -101,13 +102,13 @@ class GODiff:
 
         self.sample_config: dict = sample_config or {}
         self.dataset_config: dict = dataset_config or {}
+        self.trainer_config: dict = trainer_config or {}
 
         self.buffer_size: int = initial_buffer_size
         self.batch_size: int = batch_size
         self.sample_batch_size: int = sample_batch_size
         self.max_steps_per_loop: int = max_steps_per_loop
         self.min_E: float = min_E
-        self.log_dir: str | Path = log_dir if log_dir is not None else "logs"
         self.device: str = device
 
         self._godiff_logger: GODiffLogger | None = None
@@ -140,7 +141,7 @@ class GODiff:
         self.trainer = create_trainer(
             max_time={"hours": max_time_hours},
             extra_callbacks=callbacks,
-            log_dir=self.log_dir
+            **self.trainer_config,
         )
 
     # ------------------------------------------------------------------
@@ -600,6 +601,9 @@ class GODiff:
         )
         self.trainer.save_checkpoint(ckpt_path)
         print(f"Saved diffusion model checkpoint to {ckpt_path}")
+
+        #ensure diffusion model stays on the correct device after training
+        self.diffusion.to(self.device)
 
     # ------------------------------------------------------------------
     # Main entry point
