@@ -75,7 +75,7 @@ class TemperatureSchedule:
         """
         energies = np.asarray(energies, dtype=float)
         if self.temperature is None:
-            self.temperature = float(np.std(energies) * self.k)
+            self.temperature = float(max(np.std(energies) * self.k, 1e-6))
         else:
             C = self._compute_heat_capacity(energies)
             print(
