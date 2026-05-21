@@ -17,16 +17,14 @@ dependencies = [
     "AGeDi",
     "matplotlib",
     "seaborn",
+    "pandas",
 ]
 
-
-# test = [
-#     "pytest>=7.0.1",
-#     "pytest-cov>=5.0.0",
-#     "ruff>=0.6.5",
-#     "pytest-mock>=3.14.0",
-#     "mypy>=1.11.2",
-# ]
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0.1",
+    "pytest-cov>=5.0.0",
+]
 
 
 [build-system]
@@ -35,3 +33,6 @@ build-backend = "hatchling.build"
 
 [tool.ruff]
 line-length = 88
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
