@@ -53,6 +53,8 @@ class GODiff:
     sample_controller : SampleController
         Decides when enough structures have been collected per iteration.
         Defaults to ``SampleController()``.
+    buffer_controller : BufferController
+        Controls the replay buffer size.  Defaults to ``BufferController()``.
     training_controller : lightning.Callback
         Decides when to stop training each iteration.  Defaults to
         ``MomentumConsensusStop()``.
@@ -62,9 +64,6 @@ class GODiff:
     dataset_config : dict
         Keyword arguments forwarded to :func:`agedi.create_dataset`.  Common
         keys: ``mask``, ``confinement``.
-    initial_buffer_size : int
-        Starting size of the replay buffer.  Adapted adaptively during the
-        run.  Default: 16.
     batch_size : int
         Mini-batch size used to estimate the number of training epochs per
         iteration.  Default: 32.
@@ -88,7 +87,6 @@ class GODiff:
         sample_config: dict | None = None,
         dataset_config: dict | None = None,
         trainer_config: dict | None = None,
-        initial_buffer_size: int = 16,
         batch_size: int = 32,
         sample_batch_size: int = 16,
         max_steps_per_loop: int = 500,
@@ -107,7 +105,6 @@ class GODiff:
         self.dataset_config: dict = dataset_config or {}
         self.trainer_config: dict = trainer_config or {}
 
-        self.buffer_size: int = initial_buffer_size
         self.batch_size: int = batch_size
         self.sample_batch_size: int = sample_batch_size
         self.max_steps_per_loop: int = max_steps_per_loop
@@ -429,7 +426,7 @@ class GODiff:
             self.buffer = []
             return
 
-        if len(valid_data) <= self.buffer_size:
+        if len(valid_data) <= self.buffer_controller.get_buffer_size():
             print(
                 f"Not enough data, using all {len(valid_data)} valid structures."
             )
@@ -440,7 +437,7 @@ class GODiff:
         # Stochastic prioritised sampling: reservoir key trick
         keys = np.random.uniform(size=len(valid_data)) ** (1.0 / weights)
         sorter = np.argsort(keys)[::-1]
-        self.buffer = [valid_data[i] for i in sorter[: self.buffer_size]]
+        self.buffer = [valid_data[i] for i in sorter[: self.buffer_controller.get_buffer_size()]]
 
     # ------------------------------------------------------------------
     # Stage methods
@@ -524,7 +521,10 @@ class GODiff:
         if self.all_data:
             # Only call update_adaptive_buffer_size after temperature is set
             if self.temperature_schedule.temperature is not None:
-                self.update_adaptive_buffer_size(self.all_data)
+                self.buffer_controller.update_buffer_size(
+                    [a.get_potential_energy() for a in self.all_data],
+                    self.temperature_schedule.temperature
+                )
         self.update_buffer()
 
         # Save buffer
