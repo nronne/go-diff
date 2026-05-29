@@ -15,7 +15,7 @@ from ase.calculators.singlepoint import SinglePointCalculator as SPC
 from ase.io import write, Trajectory
 
 # AGeDi
-from agedi import create_diffusion, create_dataset, create_trainer, train, sample
+from agedi import create_dataset, create_trainer, train, sample
 
 # GO-Diff
 from go_diff.controllers import (
