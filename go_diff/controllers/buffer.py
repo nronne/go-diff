@@ -1,19 +1,12 @@
-"""Sampling controller for GO-Diff: decides when enough structures have been
-collected based on the Effective Sample Size (ESS)."""
-
 from __future__ import annotations
 
 import numpy as np
 from numpy.typing import ArrayLike
+from copy import copy
 
 
-class SampleController:
-    """Controls how many structures to sample per GO-Diff iteration.
-
-    Sampling continues until either the ESS reaches *target_ess* or the total
-    number of structures reaches *max_N*.  On the very first iteration
-    (temperature = ``None``) sampling continues until *initial_N* structures
-    are collected.
+class BufferController:
+    """Controls the buffer size
 
     Parameters
     ----------
@@ -30,13 +23,18 @@ class SampleController:
 
     def __init__(
         self,
-        initial_N: int = 32,
-        max_N: int = 64,
-        target_ess: float = 16,
+        initial_buffer_size: int = 16,
+        min_buffer_size: int = 16,
+        max_buffer_size: int = 512,
+        adaption_rate: float = 0.2,
     ) -> None:
-        self.initial_N = initial_N
-        self.max_N = max_N
-        self.target_ess = target_ess
+        self.min_buffer_size = min_buffer_size
+        self.max_buffer_size = max_buffer_size
+        self.adaption_rate = adaption_rate
+
+        self.current_buffer_size = initial_buffer_size
+        
+
 
     # ------------------------------------------------------------------
     # Public API
@@ -84,12 +82,12 @@ class SampleController:
         w_norm = w / np.sum(w)
         return float(1.0 / np.sum(w_norm ** 2))
     
-    def continue_sampling(
+    def update_buffer_size(
         self,
         energies: list[float],
         temperature: float | None = None,
     ) -> bool:
-        """Decide whether to sample more structures.
+        """update the buffer size
 
         Parameters
         ----------
@@ -101,28 +99,25 @@ class SampleController:
 
         Returns
         -------
-        bool
-            ``True`` if more structures should be sampled.
+        int:
+            The new buffer size for the next sampling step.
+
         """
         if len(energies) == 0:
-            return True
+            return self.current_buffer_size
 
-        if len(energies) >= self.max_N:
-            return False
+        ess = self.compute_ess(energies, temperature)
+        target_B = int(ess)
 
-        if temperature is None:
-            keep_going = len(energies) < self.initial_N
-            return keep_going
+        new_B = (1.0 - self.adaption_rate) * self.current_buffer_size + self.adaption_rate * target_B
+        self.current_buffer_size = int(np.clip(new_B, self.min_buffer_size, self.max_buffer_size))
 
-        current_ess = self.compute_ess(energies, temperature)
+        return self.current_buffer_size
 
-        if current_ess < self.target_ess:
-            print(
-                f"Continue sampling: ESS {current_ess:.3f} does not meet "
-                f"target of {self.target_ess}."
-            )
-            return True
-
-        print(f"Stopping sampling: ESS {current_ess:.3f} meets target.")
-        return False
-
+    def get_buffer_size(self) -> int:
+        """Return the current buffer size."""
+        return self.current_buffer_size
+    
+    def reset(self) -> None:
+        """Reset the buffer size to the initial value."""
+        self.current_buffer_size = self.min_buffer_size

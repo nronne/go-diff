@@ -21,6 +21,7 @@ from agedi import create_diffusion, create_dataset, create_trainer, train, sampl
 from go_diff.controllers import (
     TemperatureSchedule,
     SampleController,
+    BufferController,
     MomentumConsensusStop,
     FlopsAndTimingCallback,
 )
@@ -82,6 +83,7 @@ class GODiff:
         diffusion: Any,
         temperature_schedule: TemperatureSchedule | None = None,
         sample_controller: SampleController | None = None,
+        buffer_controller: BufferController | None = None,
         training_controller: Any | None = None,
         sample_config: dict | None = None,
         dataset_config: dict | None = None,
@@ -99,6 +101,7 @@ class GODiff:
         self.temperature_schedule = temperature_schedule or TemperatureSchedule()
         self.sample_controller = sample_controller or SampleController()
         self.training_controller = training_controller or MomentumConsensusStop()
+        self.buffer_controller = buffer_controller or BufferController()
 
         self.sample_config: dict = sample_config or {}
         self.dataset_config: dict = dataset_config or {}

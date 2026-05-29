@@ -1,0 +1,49 @@
+name: Auto Tag on Version Bump
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'VERSION'  # The workflow now triggers ONLY when the VERSION file changes
+
+jobs:
+  create_tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract version from VERSION file
+        id: get_version
+        # Reading a plain text file is as simple as using 'cat'
+        run: |
+          VERSION=$(cat VERSION | tr -d '[:space:]') # tr removes trailing newlines just in case
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Detected version: $VERSION"
+
+      - name: Check if tag already exists
+        id: check_tag
+        run: |
+          TAG="v${{ steps.get_version.outputs.version }}"
+          if git ls-remote --tags origin | grep -q "refs/tags/$TAG"; then
+            echo "Tag $TAG already exists."
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "Tag $TAG does not exist. Proceeding."
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create and push tag
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          TAG="v${{ steps.get_version.outputs.version }}"
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          git tag "$TAG"
+          git push origin "$TAG"
