@@ -1,1 +1,11 @@
 **/__pycache__/
+.venv
+.pytest_cache
+.coverage
+.coverage.xml
+.report.xml
+docs/_build
+**/__pycache__/
+logs/
+wandb/
+.coverage-html/
