@@ -13,12 +13,7 @@ replay buffer.
 ### 1. Install AGeDi (required diffusion backend)
 
 ```bash
-git clone https://github.com/nronne/agedi.git
-cd agedi
-git checkout boltzmann-diffusion
-pip install .
-pip install matscipy schnetpack
-cd ..
+pip install "AGeDi[full]"
 ```
 
 ### 2. Install GO-Diff

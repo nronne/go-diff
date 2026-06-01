@@ -1,24 +1,22 @@
 from __future__ import annotations
 
 import numpy as np
-from numpy.typing import ArrayLike
-from copy import copy
 
 
 class BufferController:
-    """Controls the buffer size
+    """Controls the replay buffer size via ESS-based adaptive updates.
 
     Parameters
     ----------
-    initial_N : int
-        Minimum (and default) number of structures to sample when no
-        temperature is available (first iteration).  Default: 32.
-    max_N : int
-        Hard upper limit on the number of structures per iteration.
-        Default: 64.
-    target_ess : float
-        Target Effective Sample Size.  Sampling stops once the ESS computed
-        from the current structures exceeds this value.  Default: 16.
+    initial_buffer_size : int
+        Starting buffer size.  Default: 16.
+    min_buffer_size : int
+        Lower bound on the buffer size.  Default: 16.
+    max_buffer_size : int
+        Upper bound on the buffer size.  Default: 512.
+    adaption_rate : float
+        Exponential smoothing coefficient for buffer-size updates (between 0
+        and 1).  Higher values adapt faster.  Default: 0.2.
     """
 
     def __init__(

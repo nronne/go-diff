@@ -1,8 +1,5 @@
 import torch
-from typing import Dict
 from agedi.diffusion.noisers import ConfinedCellPositions, Positions
-
-from typing import Dict
 from agedi.data import AtomsGraph
 
 

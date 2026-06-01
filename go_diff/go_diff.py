@@ -92,7 +92,6 @@ class GODiff:
         sample_batch_size: int = 16,
         max_steps_per_loop: int = 500,
         min_E: float = -500.0,
-        log_dir: str | Path | None = None,
         device: str = "cuda",
     ) -> None:
         self.calculator = calculator
@@ -391,31 +390,6 @@ class GODiff:
             if atoms.get_potential_energy() > self.min_E
         ]
 
-    def update_adaptive_buffer_size(
-        self,
-        data: list[Atoms],
-        min_B: int = 16,
-        max_B: int = 512,
-    ) -> None:
-        """Adapt :attr:`buffer_size` based on the ESS of the current dataset.
-
-        Uses a smoothed (80 % old / 20 % new) update to avoid jitter.
-
-        Parameters
-        ----------
-        data : list of ase.Atoms
-            Full accumulated dataset.
-        min_B : int
-            Minimum buffer size.  Default: 16.
-        max_B : int
-            Maximum buffer size.  Default: 512.
-        """
-        ess = self.compute_ess(data)
-        target_B = int(ess)
-        print(f"ESS: {ess:.2f}, Target Buffer Size: {target_B}")
-        new_B = 0.8 * self.buffer_size + 0.2 * target_B
-        self.buffer_size = int(np.clip(new_B, min_B, max_B))
-
     def update_buffer(self) -> None:
         """Rebuild :attr:`buffer` via Boltzmann-weighted prioritised sampling.
 
@@ -629,7 +603,6 @@ class GODiff:
         self,
         max_time_hours: float = 64,
         max_iterations: int = 100,
-        run_index: int = 0,
     ) -> str:
         """Run the complete GO-Diff training procedure.
 
@@ -643,9 +616,6 @@ class GODiff:
             Maximum total wall-clock time (hours) for the trainer.  Default: 64.
         max_iterations : int
             Maximum number of outer-loop iterations.  Default: 100.
-        run_index : int
-            Index appended to the log directory name for parallel runs.
-            Default: 0.
 
         Returns
         -------
