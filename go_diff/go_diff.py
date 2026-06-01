@@ -23,8 +23,9 @@ from go_diff.controllers import (
     TemperatureSchedule,
     SampleController,
     BufferController,
-    BufferFilter,
+    Filter,
     MinEnergyFilter,
+    MaxEnergyFilter,
     MomentumConsensusStop,
     FlopsAndTimingCallback,
 )
@@ -102,15 +103,21 @@ class GODiff:
         iteration.  Default: 32.
     max_steps_per_loop : int
         Maximum number of training steps per GO-Diff iteration.  Default: 500.
-    buffer_filters : list of BufferFilter, optional
-        Sequence of callables ``(atoms: Atoms) -> bool`` applied in order
-        before structures enter the buffer.  A structure is kept only when
+    valid_structure_filters : list of Filter or None, optional
+        Sequence of callables ``(atoms: Atoms) -> bool`` applied right after
+        energy/force evaluation to discard physically unreasonable structures.
+        Discarded structures are never added to ``all_data`` or the buffer.
+        Defaults to ``None`` (no filtering).  Pass
+        ``[MinEnergyFilter(-500.0)]`` to replicate the former
+        ``GODiff(min_E=-500.0)`` behaviour.
+    buffer_filters : list of Filter, optional
+        Sequence of callables ``(atoms: Atoms) -> bool`` applied when
+        rebuilding the buffer from ``all_data``.  A structure from
+        ``all_data`` is included in the buffer candidate pool only when
         **all** filters return ``True``.  Defaults to
-        ``[MinEnergyFilter(-500.0)]``, which discards structures with energy
-        at or below −500 eV.  Pass ``[MinEnergyFilter(0.0)]`` to discard
-        structures with non-positive energy (closely reproducing the
-        historical ``e < 0.0`` silent filter).  Use an empty list (``[]``) to
-        disable all energy filtering.
+        ``[MaxEnergyFilter(0.0)]``, which restricts the buffer to structures
+        with negative energy — reproducing the historical silent ``e < 0.0``
+        filter.  Use an empty list (``[]``) to disable buffer-level filtering.
     device : str
         Device passed to the trainer / sampler.  Default: ``"cuda"``.
     """
@@ -129,7 +136,8 @@ class GODiff:
         batch_size: int = 32,
         sample_batch_size: int = 16,
         max_steps_per_loop: int = 500,
-        buffer_filters: list[BufferFilter] | None = None,
+        valid_structure_filters: list[Filter] | None = None,
+        buffer_filters: list[Filter] | None = None,
         device: str = "cuda",
     ) -> None:
         self.calculator = calculator
@@ -146,8 +154,9 @@ class GODiff:
         self.batch_size: int = batch_size
         self.sample_batch_size: int = sample_batch_size
         self.max_steps_per_loop: int = max_steps_per_loop
-        self.buffer_filters: list[BufferFilter] = (
-            buffer_filters if buffer_filters is not None else [MinEnergyFilter(-500.0)]
+        self.valid_structure_filters: list[Filter] | None = valid_structure_filters
+        self.buffer_filters: list[Filter] = (
+            buffer_filters if buffer_filters is not None else [MaxEnergyFilter(0.0)]
         )
         self.device: str = device
 
@@ -406,11 +415,12 @@ class GODiff:
     # Buffer management
     # ------------------------------------------------------------------
 
-    def _apply_buffer_filters(self, data: list[Atoms]) -> list[Atoms]:
-        """Apply all :attr:`buffer_filters` to *data* and return survivors.
+    def _apply_valid_structure_filters(self, data: list[Atoms]) -> list[Atoms]:
+        """Apply :attr:`valid_structure_filters` to *data* and return survivors.
 
-        A structure is kept only when **every** filter in
-        :attr:`buffer_filters` returns ``True``.
+        When :attr:`valid_structure_filters` is ``None`` (the default), all
+        structures are returned unchanged.  Otherwise a structure is kept only
+        when **every** filter returns ``True``.
 
         Parameters
         ----------
@@ -420,22 +430,30 @@ class GODiff:
         -------
         list of ase.Atoms
         """
+        if not self.valid_structure_filters:
+            return data
         return [
             atoms for atoms in data
-            if all(f(atoms) for f in self.buffer_filters)
+            if all(f(atoms) for f in self.valid_structure_filters)
         ]
 
     def update_buffer(self) -> None:
         """Rebuild :attr:`buffer` via Boltzmann-weighted prioritised sampling.
 
-        Structures rejected by any of :attr:`buffer_filters` are excluded
-        (already filtered upstream by :meth:`_apply_buffer_filters`).  When
-        fewer valid structures than the current buffer size are available, all
-        structures are used.  Otherwise a stochastic prioritised subset is
-        selected via
-        reservoir-style key-based sorting.
+        :attr:`buffer_filters` are applied to :attr:`all_data` to obtain the
+        candidate pool; structures rejected by any filter are excluded.  When
+        fewer candidates than the current buffer size are available, all
+        candidates are used.  Otherwise a stochastic prioritised subset is
+        selected via reservoir-style key-based sorting.
         """
-        valid_data = self.all_data
+        # Apply buffer-level filters to the full accumulated dataset
+        if self.buffer_filters:
+            valid_data = [
+                atoms for atoms in self.all_data
+                if all(f(atoms) for f in self.buffer_filters)
+            ]
+        else:
+            valid_data = self.all_data
 
         if not valid_data:
             print(
@@ -515,7 +533,7 @@ class GODiff:
             new_samples = self.evaluate(new_samples, iteration=iteration)
             evaluation_wall_s += time.perf_counter() - t0
 
-            new_samples = self._apply_buffer_filters(new_samples)
+            new_samples = self._apply_valid_structure_filters(new_samples)
             iteration_data.extend(new_samples)
 
         # Save this iteration's structures
