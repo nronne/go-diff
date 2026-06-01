@@ -46,8 +46,7 @@ class WeightedConfinedCellPositions(_WeightedLossMixin, ConfinedCellPositions):
 
     Assumes that the batch has a ``weight`` attribute.
     """
-
-    _key = "pos"
+    pass
 
 
 class WeightedPositions(_WeightedLossMixin, Positions):
@@ -55,6 +54,6 @@ class WeightedPositions(_WeightedLossMixin, Positions):
 
     Assumes that the batch has a ``weight`` attribute.
     """
+    pass
 
-    _key = "pos"
 
