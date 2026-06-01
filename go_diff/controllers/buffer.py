@@ -117,6 +117,10 @@ class BufferController:
     def get_buffer_size(self) -> int:
         """Return the current buffer size."""
         return self.current_buffer_size
+
+    def set_buffer_size(self, size: int) -> None:
+        """Set the current buffer size."""
+        self.current_buffer_size = int(size)
     
     def reset(self) -> None:
         """Reset the buffer size to the initial value."""

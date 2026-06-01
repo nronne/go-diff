@@ -118,6 +118,14 @@ class GODiff:
         self.buffer: list[Atoms] = []
         self.all_data: list[Atoms] = []
 
+    @property
+    def buffer_size(self) -> int:
+        return self.buffer_controller.get_buffer_size()
+
+    @buffer_size.setter
+    def buffer_size(self, value: int) -> None:
+        self.buffer_controller.set_buffer_size(value)
+
     # ------------------------------------------------------------------
     # Trainer setup
     # ------------------------------------------------------------------
@@ -708,4 +716,3 @@ class GODiff:
         print(f"Final model saved to: {final_ckpt}")
 
         return final_ckpt
-
