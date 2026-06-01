@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 from typing import Any
+from copy import deepcopy
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -356,7 +357,7 @@ class GODiff:
 
 
         energies = [atoms.get_potential_energy() for atoms in atoms_list]
-        traj = [atoms.copy() for atoms in atoms_list]        
+        traj = [deepcopy(atoms) for atoms in atoms_list]
         argsort = np.argsort(energies)
         traj = [traj[i] for i in argsort]
 
