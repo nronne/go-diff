@@ -119,6 +119,9 @@ class GODiff:
         self.buffer: list[Atoms] = []
         self.all_data: list[Atoms] = []
 
+        if "regressor_data" in self.dataset_config:
+            self.dataset_config["regressor_data"] = self.all_data
+
     @property
     def buffer_size(self) -> int:
         return self.buffer_controller.get_buffer_size()
@@ -602,6 +605,7 @@ class GODiff:
         self.trainer.fit_loop.max_epochs = current_epoch + epochs_to_add
 
         buffer_props = self.get_properties(self.buffer)
+
         dataset = create_dataset(
             self.buffer, properties=buffer_props, **self.dataset_config
         )
