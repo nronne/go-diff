@@ -26,7 +26,6 @@ confinement_above_zmax = np.array([0.0, 4.0])  # confinement above the maximum z
 
 
 ##### CALCULATOR #####
-from mace.calculators import mace_mp
 calc = mace_mp(model="medium", dispersion=False, default_dtype="float32", device='cuda')
 
 ##### TEMPLATE #####
@@ -67,4 +66,4 @@ godiff = GODiff(
 )
 
 # Train the model
-godiff.run(run_index=index, max_iterations=20)
+godiff.run(max_iterations=20)

@@ -67,4 +67,4 @@ godiff = GODiff(
 )
 
 # Train the model
-godiff.run(run_index=index, max_iterations=50)
+godiff.run(max_iterations=50)

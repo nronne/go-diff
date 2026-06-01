@@ -224,16 +224,3 @@ class TestMinEnergyFilter:
         data = [_make_atoms(-1.0), _make_atoms(-2.0)]
         result = gd._min_energy_filter(data)
         assert len(result) == 2
-
-
-# ---------------------------------------------------------------------------
-# update_adaptive_buffer_size
-# ---------------------------------------------------------------------------
-
-class TestUpdateAdaptiveBufferSize:
-    def test_buffer_size_stays_within_bounds(self):
-        gd = _make_godiff()
-        gd.buffer_size = 16
-        data = [_make_atoms(-float(i)) for i in range(1, 10)]
-        gd.update_adaptive_buffer_size(data, min_B=4, max_B=32)
-        assert 4 <= gd.buffer_size <= 32

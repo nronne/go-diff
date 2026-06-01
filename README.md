@@ -10,26 +10,11 @@ replay buffer.
 
 ## Installation
 
-### 1. Install AGeDi (required diffusion backend)
-
 ```bash
-git clone https://github.com/nronne/agedi.git
-cd agedi
-git checkout boltzmann-diffusion
-pip install .
-pip install matscipy schnetpack
-cd ..
+pip install go-diff
 ```
 
-### 2. Install GO-Diff
-
-```bash
-git clone https://github.com/nronne/go-diff.git
-cd go-diff
-pip install .
-```
-
-### 3. (Optional) Reproduce paper results
+### (Optional) Reproduce paper results
 
 ```bash
 pip install mace-torch
