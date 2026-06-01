@@ -41,9 +41,11 @@ class MinEnergyFilter:
     ----------
     threshold : float
         Structures with ``get_potential_energy() <= threshold`` are removed.
-        The default ``0.0`` reproduces the historical ``e < 0.0`` silent
-        filter; pass ``-500.0`` (the previous :attr:`GODiff.min_E` default) to
-        keep only physically reasonable structures.
+        The default ``0.0`` filters out structures with non-positive energy
+        (reproducing the historical ``e < 0.0`` silent filter, modulo the
+        boundary value ``e == 0.0``).  Pass ``-500.0`` (the previous
+        :attr:`GODiff.min_E` default) to keep only physically reasonable
+        structures.
     """
 
     def __init__(self, threshold: float = 0.0) -> None:

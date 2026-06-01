@@ -107,9 +107,10 @@ class GODiff:
         before structures enter the buffer.  A structure is kept only when
         **all** filters return ``True``.  Defaults to
         ``[MinEnergyFilter(-500.0)]``, which discards structures with energy
-        below −500 eV.  Pass ``[MinEnergyFilter(0.0)]`` to additionally
-        reproduce the historical ``e < 0.0`` silent filter.  Use an empty list
-        (``[]``) to disable all energy filtering.
+        at or below −500 eV.  Pass ``[MinEnergyFilter(0.0)]`` to discard
+        structures with non-positive energy (closely reproducing the
+        historical ``e < 0.0`` silent filter).  Use an empty list (``[]``) to
+        disable all energy filtering.
     device : str
         Device passed to the trainer / sampler.  Default: ``"cuda"``.
     """
