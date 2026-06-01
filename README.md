@@ -10,21 +10,11 @@ replay buffer.
 
 ## Installation
 
-### 1. Install AGeDi (required diffusion backend)
-
 ```bash
-pip install "AGeDi[full]"
+pip install go-diff
 ```
 
-### 2. Install GO-Diff
-
-```bash
-git clone https://github.com/nronne/go-diff.git
-cd go-diff
-pip install .
-```
-
-### 3. (Optional) Reproduce paper results
+### (Optional) Reproduce paper results
 
 ```bash
 pip install mace-torch
