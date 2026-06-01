@@ -7,7 +7,7 @@ from mace.calculators import mace_mp
 from agedi import AtomsGraph, create_diffusion
 
 from go_diff import GODiff
-from go_diff.controllers import SampleController, TemperatureSchedule, MomentumConsensusStop
+from go_diff.controllers import SampleController, BufferController, TemperatureSchedule, MomentumConsensusStop
 from go_diff.noisers import WeightedConfinedCellPositions
 
 parser = ArgumentParser(description="Train a diffusion model for GO tasks.")
@@ -19,7 +19,6 @@ index = args.index
 ##### HYPERPARAMETERS #####
 name = __file__.split('/')[-1].split('.')[0]  # use the filename as the name of the experiment
 
-initial_buffer_size = 16
 min_E = -200                    # to avoid false minimas in the MACE potential
 n_atoms = 1                     # number of atoms in the optimization
 formula = "Pt"
@@ -50,6 +49,7 @@ godiff = GODiff(
     diffusion=diffusion,
     temperature_schedule=TemperatureSchedule(fast=0.5, slow=0.9),
     sample_controller=SampleController(initial_N=16, target_ess=8),
+    buffer_controller=BufferController(initial_buffer_size=16, max_buffer_size=96, adaption_rate=0.2),
     training_controller=MomentumConsensusStop(min_steps=100, patience=250, drop_factor=0.9),
     sample_config={
         "template": template,
@@ -63,9 +63,8 @@ godiff = GODiff(
     trainer_config={
         "name": name
     },
-    initial_buffer_size=initial_buffer_size,
     min_E=min_E,
 )
 
 # Train the model
-godiff.run(run_index=index, max_iterations=50)
+godiff.run(run_index=index, max_iterations=20)
