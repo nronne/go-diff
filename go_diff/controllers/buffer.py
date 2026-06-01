@@ -1,8 +1,56 @@
 from __future__ import annotations
 
+from typing import Protocol, runtime_checkable
+
 import numpy as np
+from ase import Atoms
 
 from go_diff.utils import effective_sample_size
+
+
+@runtime_checkable
+class BufferFilter(Protocol):
+    """Protocol for buffer filter callables.
+
+    A buffer filter is any callable that accepts an :class:`ase.Atoms` object
+    and returns ``True`` if the structure should be **kept** in the buffer.
+
+    Any function or object implementing ``__call__(atoms: Atoms) -> bool``
+    satisfies this protocol.
+
+    Examples
+    --------
+    Use the built-in :class:`MinEnergyFilter`::
+
+        from go_diff.controllers import MinEnergyFilter
+        filters = [MinEnergyFilter(threshold=0.0)]
+
+    Or write your own::
+
+        def my_filter(atoms):
+            return atoms.get_potential_energy() > -10.0
+    """
+
+    def __call__(self, atoms: Atoms) -> bool: ...
+
+
+class MinEnergyFilter:
+    """Filter out structures whose potential energy is at or below a threshold.
+
+    Parameters
+    ----------
+    threshold : float
+        Structures with ``get_potential_energy() <= threshold`` are removed.
+        The default ``0.0`` reproduces the historical ``e < 0.0`` silent
+        filter; pass ``-500.0`` (the previous :attr:`GODiff.min_E` default) to
+        keep only physically reasonable structures.
+    """
+
+    def __init__(self, threshold: float = 0.0) -> None:
+        self.threshold = threshold
+
+    def __call__(self, atoms: Atoms) -> bool:
+        return atoms.get_potential_energy() > self.threshold
 
 
 class BufferController:

@@ -23,6 +23,8 @@ from go_diff.controllers import (
     TemperatureSchedule,
     SampleController,
     BufferController,
+    BufferFilter,
+    MinEnergyFilter,
     MomentumConsensusStop,
     FlopsAndTimingCallback,
 )
@@ -100,9 +102,14 @@ class GODiff:
         iteration.  Default: 32.
     max_steps_per_loop : int
         Maximum number of training steps per GO-Diff iteration.  Default: 500.
-    min_E : float
-        Structures with energy below this threshold (eV) are discarded as
-        unphysical.  Default: -500.
+    buffer_filters : list of BufferFilter, optional
+        Sequence of callables ``(atoms: Atoms) -> bool`` applied in order
+        before structures enter the buffer.  A structure is kept only when
+        **all** filters return ``True``.  Defaults to
+        ``[MinEnergyFilter(-500.0)]``, which discards structures with energy
+        below −500 eV.  Pass ``[MinEnergyFilter(0.0)]`` to additionally
+        reproduce the historical ``e < 0.0`` silent filter.  Use an empty list
+        (``[]``) to disable all energy filtering.
     device : str
         Device passed to the trainer / sampler.  Default: ``"cuda"``.
     """
@@ -121,7 +128,7 @@ class GODiff:
         batch_size: int = 32,
         sample_batch_size: int = 16,
         max_steps_per_loop: int = 500,
-        min_E: float = -500.0,
+        buffer_filters: list[BufferFilter] | None = None,
         device: str = "cuda",
     ) -> None:
         self.calculator = calculator
@@ -138,7 +145,9 @@ class GODiff:
         self.batch_size: int = batch_size
         self.sample_batch_size: int = sample_batch_size
         self.max_steps_per_loop: int = max_steps_per_loop
-        self.min_E: float = min_E
+        self.buffer_filters: list[BufferFilter] = (
+            buffer_filters if buffer_filters is not None else [MinEnergyFilter(-500.0)]
+        )
         self.device: str = device
 
         self._godiff_logger: GODiffLogger | None = None
@@ -396,8 +405,11 @@ class GODiff:
     # Buffer management
     # ------------------------------------------------------------------
 
-    def _min_energy_filter(self, data: list[Atoms]) -> list[Atoms]:
-        """Remove structures with energy below :attr:`min_E`.
+    def _apply_buffer_filters(self, data: list[Atoms]) -> list[Atoms]:
+        """Apply all :attr:`buffer_filters` to *data* and return survivors.
+
+        A structure is kept only when **every** filter in
+        :attr:`buffer_filters` returns ``True``.
 
         Parameters
         ----------
@@ -409,16 +421,17 @@ class GODiff:
         """
         return [
             atoms for atoms in data
-            if atoms.get_potential_energy() > self.min_E
+            if all(f(atoms) for f in self.buffer_filters)
         ]
 
     def update_buffer(self) -> None:
         """Rebuild :attr:`buffer` via Boltzmann-weighted prioritised sampling.
 
-        Structures with energy below :attr:`min_E` are excluded (already
-        filtered upstream by :meth:`_min_energy_filter`).  When fewer valid
-        structures than the current buffer size are available, all structures
-        are used.  Otherwise a stochastic prioritised subset is selected via
+        Structures rejected by any of :attr:`buffer_filters` are excluded
+        (already filtered upstream by :meth:`_apply_buffer_filters`).  When
+        fewer valid structures than the current buffer size are available, all
+        structures are used.  Otherwise a stochastic prioritised subset is
+        selected via
         reservoir-style key-based sorting.
         """
         valid_data = self.all_data
@@ -501,7 +514,7 @@ class GODiff:
             new_samples = self.evaluate(new_samples, iteration=iteration)
             evaluation_wall_s += time.perf_counter() - t0
 
-            new_samples = self._min_energy_filter(new_samples)
+            new_samples = self._apply_buffer_filters(new_samples)
             iteration_data.extend(new_samples)
 
         # Save this iteration's structures
