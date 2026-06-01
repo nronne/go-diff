@@ -19,13 +19,15 @@ from ase.io import write, Trajectory
 from agedi import create_dataset, create_trainer, train, sample
 
 # GO-Diff
+from .filter import (
+    Filter,
+    MinEnergyFilter,
+    MaxEnergyFilter,
+)
 from go_diff.controllers import (
     TemperatureSchedule,
     SampleController,
     BufferController,
-    Filter,
-    MinEnergyFilter,
-    MaxEnergyFilter,
     MomentumConsensusStop,
     FlopsAndTimingCallback,
 )
