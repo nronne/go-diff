@@ -14,7 +14,7 @@ import pytest
 
 from go_diff.controllers.temperature import TemperatureSchedule
 from go_diff.controllers.sample import SampleController
-from go_diff.controllers.buffer import Filter, MinEnergyFilter, MaxEnergyFilter
+from go_diff.filter import Filter, MinEnergyFilter, MaxEnergyFilter
 from go_diff.go_diff import GODiff
 
 
