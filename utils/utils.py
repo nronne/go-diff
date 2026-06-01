@@ -25,8 +25,8 @@ def _get_descriptor():
 
 def classify_heptamer(atoms):
     descripter, heptamer_descriptor = _get_descriptor()
-    d = descripter.convert_matrix_to_eigen_value_string(descripter.get_bond_matrix(atoms))
-    if d == heptamer_descriptor:
+    atoms_descriptor = descripter.convert_matrix_to_eigen_value_string(descripter.get_bond_matrix(atoms))
+    if atoms_descriptor == heptamer_descriptor:
         return 1
     else:
         return 0
