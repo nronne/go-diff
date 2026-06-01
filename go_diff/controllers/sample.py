@@ -83,6 +83,9 @@ class SampleController:
         w = self.compute_weights(energies, temperature)
         w_norm = w / np.sum(w)
         return float(1.0 / np.sum(w_norm ** 2))
+
+    def calculate_ess(self, energies, temperature) -> float:
+        return self.compute_ess(energies, temperature)
     
     def continue_sampling(
         self,
@@ -125,4 +128,3 @@ class SampleController:
 
         print(f"Stopping sampling: ESS {current_ess:.3f} meets target.")
         return False
-

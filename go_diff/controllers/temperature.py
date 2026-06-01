@@ -113,4 +113,6 @@ class TemperatureSchedule:
         return variance / (self.temperature ** 2 + 1e-8)
 
 
+TemperatureController = TemperatureSchedule
+
 
