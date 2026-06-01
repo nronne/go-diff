@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from go_diff.controllers.temperature import TemperatureSchedule, TemperatureController
+from go_diff.controllers.temperature import TemperatureSchedule
 
 
 class TestTemperatureSchedule:
@@ -68,10 +68,6 @@ class TestTemperatureSchedule:
         e = np.array([-1.0, -2.0, -3.0, -4.0])
         expected = ts.next(e)
         assert ts.get_temperature() == pytest.approx(expected, rel=1e-9)
-
-    def test_temperature_controller_alias(self):
-        """TemperatureController must be the same class as TemperatureSchedule."""
-        assert TemperatureController is TemperatureSchedule
 
     def test_list_input(self):
         """next() should accept plain Python lists."""

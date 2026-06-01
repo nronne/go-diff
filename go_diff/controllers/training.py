@@ -285,17 +285,26 @@ class AdaptiveRefinementStop(Callback):
         return torch.cat(grads) if grads else torch.tensor([])
 
 
-    def reset(self, trainer: Any) -> None:
-        """Reset internal state; *min_steps* is offset by the current global step.
+    def on_train_start(self, trainer: Any, pl_module: Any) -> None:
+        """Reset internal state at the start of each GO-Diff training stage.
 
-        Call this at the start of each new GO-Diff training stage so that the
-        warm-up period is restarted relative to the current Lightning global step.
+        *min_steps* is offset by the current global step so the warm-up
+        period is restarted relative to the current Lightning global step.
         """
         self.ema_agreement = 0.0
         self.max_agreement = -1.0
         self.patience_counter = 0
         self.min_steps = trainer.global_step + self._min_steps
 
+    def reset(self, trainer: Any) -> None:
+        """Reset internal state; *min_steps* is offset by the current global step.
+
+        .. deprecated::
+            Call :meth:`on_train_start` or rely on the Lightning callback
+            mechanism instead.  This method is kept for backwards compatibility
+            but will be removed in a future release.
+        """
+        self.on_train_start(trainer, None)
 
 class FlopsAndTimingCallback(Callback):
     """Lightning callback that tracks per-training-step wall-time and estimates

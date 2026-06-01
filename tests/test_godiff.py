@@ -14,6 +14,7 @@ import pytest
 
 from go_diff.controllers.temperature import TemperatureSchedule
 from go_diff.controllers.sample import SampleController
+from go_diff.controllers.buffer import Filter, MinEnergyFilter, MaxEnergyFilter
 from go_diff.go_diff import GODiff
 
 
@@ -174,15 +175,24 @@ class TestUpdateBuffer:
         gd.update_buffer()
         assert gd.buffer == []
 
-    def test_positive_energy_structures_excluded(self):
+    def test_positive_energy_structures_excluded_by_default(self):
+        """Default buffer_filters=[MaxEnergyFilter(0.0)] excludes positive-energy structures."""
         gd = _make_godiff()
+        gd.all_data = [_make_atoms(+1.0), _make_atoms(+2.0), _make_atoms(-1.0)]
+        gd.update_buffer()
+        assert len(gd.buffer) == 1
+        assert gd.buffer[0].get_potential_energy() < 0.0
+
+    def test_positive_energy_structures_included_when_filters_disabled(self):
+        """Positive-energy structures are kept when buffer_filters=[]."""
+        gd = _make_godiff(buffer_filters=[])
         gd.all_data = [_make_atoms(+1.0), _make_atoms(+2.0)]
         gd.update_buffer()
-        assert gd.buffer == []
+        assert len(gd.buffer) == 2
 
     def test_fewer_than_buffer_size_uses_all(self):
         gd = _make_godiff()
-        gd.buffer_size = 16
+        gd.buffer_controller.set_buffer_size(16)
         data = [_make_atoms(-float(i)) for i in range(1, 6)]
         gd.all_data = data
         gd.update_buffer()
@@ -190,14 +200,14 @@ class TestUpdateBuffer:
 
     def test_buffer_does_not_exceed_buffer_size(self):
         gd = _make_godiff()
-        gd.buffer_size = 4
+        gd.buffer_controller.set_buffer_size(4)
         gd.all_data = [_make_atoms(-float(i)) for i in range(1, 20)]
         gd.update_buffer()
         assert len(gd.buffer) <= 4
 
     def test_buffer_contains_negative_energy_structures(self):
         gd = _make_godiff()
-        gd.buffer_size = 4
+        gd.buffer_controller.set_buffer_size(4)
         gd.all_data = [_make_atoms(-float(i)) for i in range(1, 10)]
         gd.update_buffer()
         for atoms in gd.buffer:
@@ -205,22 +215,108 @@ class TestUpdateBuffer:
 
 
 # ---------------------------------------------------------------------------
-# _min_energy_filter
+# Filter classes
 # ---------------------------------------------------------------------------
 
 class TestMinEnergyFilter:
-    def test_filters_below_min_E(self):
-        gd = _make_godiff()
-        gd.min_E = -5.0
+    def test_filters_below_threshold(self):
+        f = MinEnergyFilter(threshold=-5.0)
         data = [_make_atoms(-3.0), _make_atoms(-10.0), _make_atoms(-1.0)]
-        result = gd._min_energy_filter(data)
-        energies = [a.get_potential_energy() for a in result]
-        assert all(e > -5.0 for e in energies)
+        result = [a for a in data if f(a)]
         assert len(result) == 2
+        assert all(a.get_potential_energy() > -5.0 for a in result)
 
     def test_keeps_valid_structures(self):
-        gd = _make_godiff()
-        gd.min_E = -500.0
+        f = MinEnergyFilter(threshold=-500.0)
         data = [_make_atoms(-1.0), _make_atoms(-2.0)]
-        result = gd._min_energy_filter(data)
+        assert len([a for a in data if f(a)]) == 2
+
+    def test_boundary_excluded(self):
+        f = MinEnergyFilter(threshold=-5.0)
+        assert not f(_make_atoms(-5.0))
+        assert f(_make_atoms(-4.99))
+
+
+class TestMaxEnergyFilter:
+    def test_filters_above_threshold(self):
+        f = MaxEnergyFilter(threshold=0.0)
+        data = [_make_atoms(-1.0), _make_atoms(1.0), _make_atoms(-2.0)]
+        result = [a for a in data if f(a)]
         assert len(result) == 2
+        assert all(a.get_potential_energy() < 0.0 for a in result)
+
+    def test_boundary_excluded(self):
+        f = MaxEnergyFilter(threshold=0.0)
+        assert not f(_make_atoms(0.0))
+        assert f(_make_atoms(-0.01))
+
+    def test_default_threshold_zero(self):
+        f = MaxEnergyFilter()
+        assert not f(_make_atoms(0.1))
+        assert f(_make_atoms(-0.1))
+
+
+class TestFilterProtocol:
+    def test_min_energy_filter_satisfies_protocol(self):
+        assert isinstance(MinEnergyFilter(), Filter)
+
+    def test_max_energy_filter_satisfies_protocol(self):
+        assert isinstance(MaxEnergyFilter(), Filter)
+
+    def test_lambda_satisfies_protocol(self):
+        assert isinstance(lambda a: True, Filter)
+
+
+class TestApplyValidStructureFilters:
+    def test_single_filter(self):
+        gd = _make_godiff(valid_structure_filters=[MinEnergyFilter(-5.0)])
+        data = [_make_atoms(-3.0), _make_atoms(-10.0), _make_atoms(-1.0)]
+        result = gd._apply_valid_structure_filters(data)
+        assert len(result) == 2
+        assert all(a.get_potential_energy() > -5.0 for a in result)
+
+    def test_multiple_filters_stacked(self):
+        # Keep only structures with -4.0 < e < -0.5
+        gd = _make_godiff(valid_structure_filters=[
+            MinEnergyFilter(-4.0),
+            MaxEnergyFilter(-0.5),
+        ])
+        data = [_make_atoms(-1.0), _make_atoms(-2.0), _make_atoms(-5.0), _make_atoms(-0.1)]
+        result = gd._apply_valid_structure_filters(data)
+        assert len(result) == 2
+        assert all(-4.0 < a.get_potential_energy() < -0.5 for a in result)
+
+    def test_none_filters_keeps_all(self):
+        gd = _make_godiff(valid_structure_filters=None)
+        data = [_make_atoms(-1.0), _make_atoms(-600.0)]
+        result = gd._apply_valid_structure_filters(data)
+        assert len(result) == 2
+
+    def test_empty_filters_keeps_all(self):
+        gd = _make_godiff(valid_structure_filters=[])
+        data = [_make_atoms(-1.0), _make_atoms(-600.0)]
+        result = gd._apply_valid_structure_filters(data)
+        assert len(result) == 2
+
+
+class TestBufferFiltersInUpdateBuffer:
+    def test_default_max_energy_filter(self):
+        gd = _make_godiff()
+        # default buffer_filters = [MaxEnergyFilter(0.0)]
+        gd.all_data = [_make_atoms(-1.0), _make_atoms(1.0), _make_atoms(-2.0)]
+        gd.update_buffer()
+        assert all(a.get_potential_energy() < 0.0 for a in gd.buffer)
+        assert len(gd.buffer) == 2
+
+    def test_custom_buffer_filter(self):
+        gd = _make_godiff(buffer_filters=[MinEnergyFilter(-500.0)])
+        gd.all_data = [_make_atoms(-1.0), _make_atoms(-600.0)]
+        gd.update_buffer()
+        assert len(gd.buffer) == 1
+        assert gd.buffer[0].get_potential_energy() > -500.0
+
+    def test_empty_buffer_filters_uses_all_data(self):
+        gd = _make_godiff(buffer_filters=[])
+        gd.all_data = [_make_atoms(-1.0), _make_atoms(1.0)]
+        gd.update_buffer()
+        assert len(gd.buffer) == 2
