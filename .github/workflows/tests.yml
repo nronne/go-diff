@@ -39,7 +39,7 @@ jobs:
         
     - name: Install dependencies
       # uv fetches the target Python version and syncs the exact locked environment
-      run: uv sync --python ${{ matrix.python-version }} --extra test --extra full
+      run: uv sync --python ${{ matrix.python-version }} --extra test
       
     - name: Test with pytest
       run: uv run pytest
