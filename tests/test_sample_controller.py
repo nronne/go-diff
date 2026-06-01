@@ -41,28 +41,28 @@ class TestSampleController:
         energies = [-100.0] + [-1.0] * 15   # weight on first >> rest
         assert sc.continue_sampling(energies, temperature=0.1) is True
 
-    def test_calculate_ess_uniform_weights(self):
+    def test_compute_ess_uniform_weights(self):
         """Equal energies → ESS = N."""
         sc = SampleController()
         energies = [-1.0] * 10
-        ess = sc.calculate_ess(energies, temperature=1.0)
+        ess = sc.compute_ess(energies, temperature=1.0)
         assert ess == pytest.approx(10.0, rel=1e-6)
 
-    def test_calculate_ess_one_dominant(self):
+    def test_compute_ess_one_dominant(self):
         """One dominant energy → ESS ≈ 1."""
         sc = SampleController()
         # Very large negative energy dominates
         energies = [-1000.0] + [-1.0] * 99
-        ess = sc.calculate_ess(energies, temperature=0.01)
+        ess = sc.compute_ess(energies, temperature=0.01)
         assert ess == pytest.approx(1.0, abs=0.1)
 
-    def test_calculate_ess_is_positive(self):
+    def test_compute_ess_is_positive(self):
         sc = SampleController()
-        ess = sc.calculate_ess([-1.0, -2.0, -3.0], temperature=1.0)
+        ess = sc.compute_ess([-1.0, -2.0, -3.0], temperature=1.0)
         assert ess > 0
 
-    def test_calculate_ess_between_1_and_N(self):
+    def test_compute_ess_between_1_and_N(self):
         sc = SampleController()
         energies = list(range(-10, 0))
-        ess = sc.calculate_ess(energies, temperature=1.0)
+        ess = sc.compute_ess(energies, temperature=1.0)
         assert 1.0 <= ess <= len(energies)

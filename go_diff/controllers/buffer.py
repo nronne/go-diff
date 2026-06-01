@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from go_diff.utils import effective_sample_size
+
 
 class BufferController:
     """Controls the replay buffer size via ESS-based adaptive updates.
@@ -14,7 +16,7 @@ class BufferController:
         Lower bound on the buffer size.  Default: 16.
     max_buffer_size : int
         Upper bound on the buffer size.  Default: 512.
-    adaption_rate : float
+    adaptation_rate : float
         Exponential smoothing coefficient for buffer-size updates (between 0
         and 1).  Higher values adapt faster.  Default: 0.2.
     """
@@ -24,68 +26,31 @@ class BufferController:
         initial_buffer_size: int = 16,
         min_buffer_size: int = 16,
         max_buffer_size: int = 512,
-        adaption_rate: float = 0.2,
+        adaptation_rate: float = 0.2,
     ) -> None:
         self.min_buffer_size = min_buffer_size
         self.max_buffer_size = max_buffer_size
-        self.adaption_rate = adaption_rate
+        self.adaptation_rate = adaptation_rate
 
         self.current_buffer_size = initial_buffer_size
-        
-
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def compute_weights(self, energies, temperature) -> np.ndarray:
-        """Compute Boltzmann importance weights
-
-        Weights are normalised so that their sum equals ``len(data)``.
-        Uses the current temperature from :attr:`temperature_schedule`.
-
-        Parameters
-        ----------
-        energies : array-like of float
-                Scalar potential energies (eV).
-        temperature : float
-
-        Returns
-        -------
-        np.ndarray of float, shape ``(len(data),)``
-            Boltzmann importance weights, summing to ``len(data)``.
-        """
-        energies = np.array(energies, dtype=float)
-        Es_scaled = -energies / temperature
-        Es_shifted = Es_scaled - np.max(Es_scaled)
-        exp_Es = np.exp(Es_shifted)
-        weights = exp_Es / np.sum(exp_Es) * len(energies)
-        return weights
-
     def compute_ess(self, energies, temperature) -> float:
-        """Compute the Effective Sample Size (ESS)
+        """Compute the Effective Sample Size (ESS).
 
-        Parameters
-        ----------
-        energies : array-like of float
-                Scalar potential energies (eV).
-        temperature : float
-
-        Returns
-        -------
-        float
-            The ESS (between 1 and len(data)).
+        Delegates to :func:`go_diff.utils.effective_sample_size`.
         """
-        w = self.compute_weights(energies, temperature)
-        w_norm = w / np.sum(w)
-        return float(1.0 / np.sum(w_norm ** 2))
-    
+        return effective_sample_size(energies, temperature)
+
     def update_buffer_size(
         self,
         energies: list[float],
         temperature: float | None = None,
-    ) -> bool:
-        """update the buffer size
+    ) -> int:
+        """Update the buffer size based on the current ESS.
 
         Parameters
         ----------
@@ -97,9 +62,8 @@ class BufferController:
 
         Returns
         -------
-        int:
+        int
             The new buffer size for the next sampling step.
-
         """
         if len(energies) == 0:
             return self.current_buffer_size
@@ -107,7 +71,7 @@ class BufferController:
         ess = self.compute_ess(energies, temperature)
         target_B = int(ess)
 
-        new_B = (1.0 - self.adaption_rate) * self.current_buffer_size + self.adaption_rate * target_B
+        new_B = (1.0 - self.adaptation_rate) * self.current_buffer_size + self.adaptation_rate * target_B
         self.current_buffer_size = int(np.clip(new_B, self.min_buffer_size, self.max_buffer_size))
 
         return self.current_buffer_size
@@ -119,7 +83,7 @@ class BufferController:
     def set_buffer_size(self, size: int) -> None:
         """Set the current buffer size."""
         self.current_buffer_size = int(size)
-    
+
     def reset(self) -> None:
         """Reset the buffer size to the initial value."""
         self.current_buffer_size = self.min_buffer_size

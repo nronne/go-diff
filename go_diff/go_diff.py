@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any
+from typing import Protocol, runtime_checkable
 from copy import deepcopy
 
 import numpy as np
@@ -26,7 +26,34 @@ from go_diff.controllers import (
     MomentumConsensusStop,
     FlopsAndTimingCallback,
 )
+from go_diff.utils import boltzmann_weights, effective_sample_size
 from .logger import GODiffLogger
+
+
+# ---------------------------------------------------------------------------
+# Protocol definitions
+# ---------------------------------------------------------------------------
+
+@runtime_checkable
+class Calculator(Protocol):
+    """Minimal interface expected of an ASE-compatible energy/force calculator."""
+
+    def get_potential_energy(self) -> float: ...
+    def get_forces(self) -> np.ndarray: ...
+
+
+@runtime_checkable
+class DiffusionModel(Protocol):
+    """Minimal interface expected of an AGeDi diffusion model."""
+
+    def to(self, device: str) -> "DiffusionModel": ...
+
+
+@runtime_checkable
+class TrainingController(Protocol):
+    """Minimal interface expected of a Lightning training-stop callback."""
+
+    def set_logger(self, logger: object) -> None: ...
 
 
 class GODiff:
@@ -44,10 +71,12 @@ class GODiff:
 
     Parameters
     ----------
-    calculator : ASE calculator
-        Calculator used to evaluate potential energies and forces.
-    diffusion : AGeDi diffusion model
-        Diffusion model created with :func:`agedi.create_diffusion`.
+    calculator : Calculator
+        ASE-compatible calculator used to evaluate potential energies and
+        forces (must implement :class:`Calculator`).
+    diffusion : DiffusionModel
+        Diffusion model created with :func:`agedi.create_diffusion` (must
+        implement :class:`DiffusionModel`).
     temperature_schedule : TemperatureSchedule
         Controls the annealing temperature.  Defaults to
         ``TemperatureSchedule()``.
@@ -56,15 +85,16 @@ class GODiff:
         Defaults to ``SampleController()``.
     buffer_controller : BufferController
         Controls the replay buffer size.  Defaults to ``BufferController()``.
-    training_controller : lightning.Callback
-        Decides when to stop training each iteration.  Defaults to
+    training_controller : TrainingController
+        Decides when to stop training each iteration (must implement
+        :class:`TrainingController`).  Defaults to
         ``MomentumConsensusStop()``.
     sample_config : dict
         Keyword arguments forwarded to :func:`agedi.sample`.  Common keys:
         ``template``, ``atomic_numbers``, ``ForceFieldGuidanceConfig``.
     dataset_config : dict
         Keyword arguments forwarded to :func:`agedi.create_dataset`.  Common
-        keys: ``mask``, ``confinement``.
+        keys: ``mask``, ``confinement``, ``regressor_data``.
     batch_size : int
         Mini-batch size used to estimate the number of training epochs per
         iteration.  Default: 32.
@@ -79,12 +109,12 @@ class GODiff:
 
     def __init__(
         self,
-        calculator: Any,
-        diffusion: Any,
+        calculator: Calculator,
+        diffusion: DiffusionModel,
         temperature_schedule: TemperatureSchedule | None = None,
         sample_controller: SampleController | None = None,
         buffer_controller: BufferController | None = None,
-        training_controller: Any | None = None,
+        training_controller: TrainingController | None = None,
         sample_config: dict | None = None,
         dataset_config: dict | None = None,
         trainer_config: dict | None = None,
@@ -113,27 +143,16 @@ class GODiff:
 
         self._godiff_logger: GODiffLogger | None = None
         self._flops_timing_cb: FlopsAndTimingCallback | None = None
-        self.trainer: Any | None = None
+        self.trainer: object | None = None
 
         self.buffer: list[Atoms] = []
         self.all_data: list[Atoms] = []
-
-        if "regressor_data" in self.dataset_config:
-            self.dataset_config["regressor_data"] = self.all_data
-
-    @property
-    def buffer_size(self) -> int:
-        return self.buffer_controller.get_buffer_size()
-
-    @buffer_size.setter
-    def buffer_size(self, value: int) -> None:
-        self.buffer_controller.set_buffer_size(value)
 
     # ------------------------------------------------------------------
     # Trainer setup
     # ------------------------------------------------------------------
 
-    def get_trainer(self, max_time_hours: float = 64) -> None:
+    def _get_trainer(self, max_time_hours: float = 64) -> None:
         """Create and store a PyTorch Lightning trainer.
 
         Parameters
@@ -159,26 +178,33 @@ class GODiff:
     # Sampling & evaluation
     # ------------------------------------------------------------------
 
-    def sample(self) -> list[Atoms]:
+    def sample(self, exclude_keys: set[str] | None = None) -> list[Atoms]:
         """Sample structures from the current diffusion model.
 
         Uses :attr:`sample_config` as keyword arguments forwarded to
         :func:`agedi.sample`.  When a ``"template"`` is present the template
         atoms are frozen via :class:`ase.constraints.FixAtoms`.
 
+        Parameters
+        ----------
+        exclude_keys : set of str or None
+            Keys to temporarily omit from :attr:`sample_config` for this call.
+            Useful for suppressing optional guidance on the first iteration.
+
         Returns
         -------
         list of ase.Atoms
             Sampled structures.
         """
-        if "n_samples" in self.sample_config:
-            n_samples = self.sample_config.pop("n_samples")
-        else:
-            n_samples = self.sample_batch_size
+        config = dict(self.sample_config)
+        if exclude_keys:
+            for key in exclude_keys:
+                config.pop(key, None)
+        n_samples = config.pop("n_samples", self.sample_batch_size)
 
-        atoms_list = sample(self.diffusion, n_samples=n_samples, **self.sample_config)
+        atoms_list = sample(self.diffusion, n_samples=n_samples, **config)
 
-        template = self.sample_config.get("template")
+        template = config.get("template")
         if template is not None:
             template_len = len(template)
             for atoms in atoms_list:
@@ -277,11 +303,7 @@ class GODiff:
         """
         temperature = self.temperature_schedule.get_temperature()
         energies = np.array([atoms.get_potential_energy() for atoms in data])
-        Es_scaled = -energies / temperature
-        Es_shifted = Es_scaled - np.max(Es_scaled)
-        exp_Es = np.exp(Es_shifted)
-        weights = exp_Es / np.sum(exp_Es) * len(energies)
-        return weights
+        return boltzmann_weights(energies, temperature)
 
     def compute_ess(self, data: list[Atoms]) -> float:
         """Compute the Effective Sample Size (ESS) for a set of structures.
@@ -296,9 +318,9 @@ class GODiff:
         float
             The ESS (between 1 and len(data)).
         """
-        w = self.compute_weights(data)
-        w_norm = w / np.sum(w)
-        return float(1.0 / np.sum(w_norm ** 2))
+        temperature = self.temperature_schedule.get_temperature()
+        energies = np.array([atoms.get_potential_energy() for atoms in data])
+        return effective_sample_size(energies, temperature)
 
     def get_properties(
         self,
@@ -338,7 +360,7 @@ class GODiff:
         self,
         atoms_list: list[Atoms],
         path: str | Path | None = None,
-        writer: Any | None = None,
+        writer: object | None = None,
     ) -> None:
         """Save structures (sorted by energy) to a trajectory file.
 
@@ -393,20 +415,17 @@ class GODiff:
     def update_buffer(self) -> None:
         """Rebuild :attr:`buffer` via Boltzmann-weighted prioritised sampling.
 
-        Structures with positive energy are excluded (likely unphysical).
-        When fewer valid structures than :attr:`buffer_size` are available,
-        all valid structures are used.  Otherwise a stochastic prioritised
-        subset of size :attr:`buffer_size` is selected via reservoir-style
-        key-based sorting.
+        Structures with energy below :attr:`min_E` are excluded (already
+        filtered upstream by :meth:`_min_energy_filter`).  When fewer valid
+        structures than the current buffer size are available, all structures
+        are used.  Otherwise a stochastic prioritised subset is selected via
+        reservoir-style key-based sorting.
         """
-        energies = [atoms.get_potential_energy() for atoms in self.all_data]
-        valid_data = [
-            atoms for atoms, e in zip(self.all_data, energies) if e < 0.0
-        ]
+        valid_data = self.all_data
 
         if not valid_data:
             print(
-                "No valid structures found with negative energy at "
+                "No valid structures at "
                 f"T={self.temperature_schedule.temperature}"
             )
             self.buffer = []
@@ -432,8 +451,9 @@ class GODiff:
     def sample_stage(
         self,
         iteration: int,
-        data_writer: Any,
+        data_writer: object,
         logdir: Path,
+        exclude_sample_keys: set[str] | None = None,
     ) -> dict:
         """Run one sampling-and-evaluation stage.
 
@@ -450,6 +470,9 @@ class GODiff:
             Open trajectory writer for all accumulated structures.
         logdir : pathlib.Path
             Directory for per-iteration trajectory files.
+        exclude_sample_keys : set of str or None
+            Keys to omit from :attr:`sample_config` for this stage (passed
+            through to :meth:`sample`).
 
         Returns
         -------
@@ -470,7 +493,7 @@ class GODiff:
             current_temperature,
         ):
             t0 = time.perf_counter()
-            new_samples = self.sample()
+            new_samples = self.sample(exclude_keys=exclude_sample_keys)
             new_samples = self.check_min_dist(new_samples, min_dist=1.0)
             sampling_wall_s += time.perf_counter() - t0
 
@@ -580,8 +603,13 @@ class GODiff:
 
         buffer_props = self.get_properties(self.buffer)
 
+        dataset_config = dict(self.dataset_config)
+        # Inject live all_data reference for regressor training if requested.
+        if "regressor_data" in dataset_config:
+            dataset_config["regressor_data"] = self.all_data
+
         dataset = create_dataset(
-            self.buffer, properties=buffer_props, **self.dataset_config
+            self.buffer, properties=buffer_props, **dataset_config
         )
         train(self.diffusion, dataset, self.trainer)
 
@@ -622,7 +650,7 @@ class GODiff:
         str
             Path to the final saved model checkpoint.
         """
-        self.get_trainer(max_time_hours)
+        self._get_trainer(max_time_hours)
 
         logdir = Path(self.trainer.log_dir)
         logdir.mkdir(parents=True, exist_ok=True)
@@ -633,15 +661,18 @@ class GODiff:
 
         data_writer = Trajectory(str(logdir / "all_data.traj"), mode="w")
 
-        # Pop force-field guidance config for the first iteration
-        ffg_config = self.sample_config.pop("ForceFieldGuidanceConfig", None)
+        # Disable force-field guidance on the first iteration (cold start)
+        # by passing a temporary config without ForceFieldGuidanceConfig.
+        ffg_config = self.sample_config.get("ForceFieldGuidanceConfig")
 
         i = 0
         while i < max_iterations:
             print(f"\n{'='*50}\nSTAGE {i}\n{'='*50}")
 
             t_iter_start = time.perf_counter()
-            stage_info = self.sample_stage(i, data_writer, logdir)
+            # Suppress force-field guidance on the first (cold-start) iteration.
+            exclude = {"ForceFieldGuidanceConfig"} if i == 0 and ffg_config is not None else None
+            stage_info = self.sample_stage(i, data_writer, logdir, exclude_sample_keys=exclude)
 
             temperature = self.temperature_schedule.temperature
             print(
@@ -659,9 +690,6 @@ class GODiff:
                         iteration_wall_s=time.perf_counter() - t_iter_start,
                     )
                 i += 1
-                # Re-add FFG config so subsequent iterations have it available
-                if i == 1 and ffg_config is not None:
-                    self.sample_config["ForceFieldGuidanceConfig"] = ffg_config
                 continue
 
             t_train_start = time.perf_counter()
@@ -677,10 +705,6 @@ class GODiff:
                     training_wall_s=training_wall_s,
                     iteration_wall_s=iteration_wall_s,
                 )
-
-            # Re-enable force-field guidance after the first iteration
-            if i == 0 and ffg_config is not None:
-                self.sample_config["ForceFieldGuidanceConfig"] = ffg_config
 
             i += 1
 

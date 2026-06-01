@@ -174,15 +174,18 @@ class TestUpdateBuffer:
         gd.update_buffer()
         assert gd.buffer == []
 
-    def test_positive_energy_structures_excluded(self):
+    def test_positive_energy_structures_included(self):
+        """Positive-energy structures are no longer silently excluded by
+        update_buffer itself; they must be filtered upstream via
+        _min_energy_filter before being added to all_data."""
         gd = _make_godiff()
         gd.all_data = [_make_atoms(+1.0), _make_atoms(+2.0)]
         gd.update_buffer()
-        assert gd.buffer == []
+        assert len(gd.buffer) == 2  # structures present, not filtered here
 
     def test_fewer_than_buffer_size_uses_all(self):
         gd = _make_godiff()
-        gd.buffer_size = 16
+        gd.buffer_controller.set_buffer_size(16)
         data = [_make_atoms(-float(i)) for i in range(1, 6)]
         gd.all_data = data
         gd.update_buffer()
@@ -190,14 +193,14 @@ class TestUpdateBuffer:
 
     def test_buffer_does_not_exceed_buffer_size(self):
         gd = _make_godiff()
-        gd.buffer_size = 4
+        gd.buffer_controller.set_buffer_size(4)
         gd.all_data = [_make_atoms(-float(i)) for i in range(1, 20)]
         gd.update_buffer()
         assert len(gd.buffer) <= 4
 
     def test_buffer_contains_negative_energy_structures(self):
         gd = _make_godiff()
-        gd.buffer_size = 4
+        gd.buffer_controller.set_buffer_size(4)
         gd.all_data = [_make_atoms(-float(i)) for i in range(1, 10)]
         gd.update_buffer()
         for atoms in gd.buffer:

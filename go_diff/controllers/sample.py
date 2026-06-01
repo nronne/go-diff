@@ -3,8 +3,7 @@ collected based on the Effective Sample Size (ESS)."""
 
 from __future__ import annotations
 
-import numpy as np
-from numpy.typing import ArrayLike
+from go_diff.utils import boltzmann_weights, effective_sample_size
 
 
 class SampleController:
@@ -42,51 +41,20 @@ class SampleController:
     # Public API
     # ------------------------------------------------------------------
 
-    def compute_weights(self, energies, temperature) -> np.ndarray:
-        """Compute Boltzmann importance weights
+    def compute_weights(self, energies, temperature):
+        """Compute Boltzmann importance weights.
 
-        Weights are normalised so that their sum equals ``len(data)``.
-        Uses the current temperature from :attr:`temperature_schedule`.
-
-        Parameters
-        ----------
-        energies : array-like of float
-                Scalar potential energies (eV).
-        temperature : float
-
-        Returns
-        -------
-        np.ndarray of float, shape ``(len(data),)``
-            Boltzmann importance weights, summing to ``len(data)``.
+        Delegates to :func:`go_diff.utils.boltzmann_weights`.
         """
-        energies = np.array(energies, dtype=float)
-        Es_scaled = -energies / temperature
-        Es_shifted = Es_scaled - np.max(Es_scaled)
-        exp_Es = np.exp(Es_shifted)
-        weights = exp_Es / np.sum(exp_Es) * len(energies)
-        return weights
+        return boltzmann_weights(energies, temperature)
 
     def compute_ess(self, energies, temperature) -> float:
-        """Compute the Effective Sample Size (ESS)
+        """Compute the Effective Sample Size (ESS).
 
-        Parameters
-        ----------
-        energies : array-like of float
-                Scalar potential energies (eV).
-        temperature : float
-
-        Returns
-        -------
-        float
-            The ESS (between 1 and len(data)).
+        Delegates to :func:`go_diff.utils.effective_sample_size`.
         """
-        w = self.compute_weights(energies, temperature)
-        w_norm = w / np.sum(w)
-        return float(1.0 / np.sum(w_norm ** 2))
+        return effective_sample_size(energies, temperature)
 
-    def calculate_ess(self, energies, temperature) -> float:
-        return self.compute_ess(energies, temperature)
-    
     def continue_sampling(
         self,
         energies: list[float],
