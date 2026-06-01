@@ -124,7 +124,7 @@ class GODiff:
 
     @buffer_size.setter
     def buffer_size(self, value: int) -> None:
-        self.buffer_controller.current_buffer_size = int(value)
+        self.buffer_controller.set_buffer_size(value)
 
     # ------------------------------------------------------------------
     # Trainer setup
