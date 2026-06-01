@@ -9,10 +9,6 @@ energy/force calculator and iteratively refines the model through
 Boltzmann-weighted training, adaptive temperature annealing, and an adaptive
 replay buffer.
 
-.. note::
-
-   This project is under active development.
-
 .. toctree::
    :maxdepth: 2
    :caption: Documentation
