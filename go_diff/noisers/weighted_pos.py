@@ -57,4 +57,4 @@ class WeightedPositions(_WeightedLossMixin, Positions):
     """
 
     _key = "pos"
-    
+
