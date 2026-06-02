@@ -4,7 +4,7 @@ Installation
 Requirements
 ------------
 
-- Python >= 3.11
+- Python >= 3.12
 - A CUDA-capable GPU is strongly recommended for training and sampling.
 
 Install GO-Diff
@@ -14,16 +14,6 @@ Install GO-Diff
 
    pip install go-diff
 
-Step 3 – (Optional) Paper-reproduction dependencies
-----------------------------------------------------
-
-To reproduce the results from the paper you additionally need MACE and the
-full AGOX package:
-
-.. code-block:: console
-
-   pip install mace-torch
-   pip install "agox[full]"
 
 Developer install
 -----------------

@@ -74,7 +74,7 @@ Adaptive buffer size
 --------------------
 
 The buffer size is adapted each iteration using a smoothed update towards the
-current ESS:
+current ESS. E.g. for `adaptation_rate=0.2`:
 
 .. code-block:: text
 

@@ -5,8 +5,9 @@ from ase.build import fcc111, surface
 from mace.calculators import mace_mp
 
 from agedi import AtomsGraph, create_diffusion
+from agedi.diffusion import ForcefieldGuidanceConfig
 
-from go_diff import GODiff
+from go_diff import GODiff, MinEnergyFilter
 from go_diff.controllers import SampleController, BufferController, TemperatureSchedule, MomentumConsensusStop
 from go_diff.noisers import WeightedConfinedCellPositions
 
@@ -26,6 +27,7 @@ confinement_above_zmax = np.array([0.0, 4.0])  # confinement above the maximum z
 
 
 ##### CALCULATOR #####
+from mace.calculators import mace_mp
 calc = mace_mp(model="medium", dispersion=False, default_dtype="float32", device='cuda')
 
 ##### TEMPLATE #####
@@ -38,7 +40,7 @@ template = AtomsGraph.from_atoms(template, confinement=confinement)
 
 
 #### DIFFUSION MODEL #####
-diffusion = create_diffusion(noisers=(WeightedConfinedCellPositions(),))
+diffusion = create_diffusion(noisers=(WeightedConfinedCellPositions(),), force_field=True)
 
 #### GO-DIFF #####
 
@@ -54,15 +56,18 @@ godiff = GODiff(
         "template": template,
         "formula": formula,
         "confinement": confinement,
+        "ff_guidance": ForcefieldGuidanceConfig(guidance=1.0,)
     },
     dataset_config={
         "mask": "MaskFixed",
         "confinement": confinement,
+        "regressor_data": "all_data", # use all data for training the regressor, not just the data in the buffer
     },
     trainer_config={
         "name": name
     },
     min_E=min_E,
+    valid_structure_filters=[MinEnergyFilter(min_E)],    
 )
 
 # Train the model
