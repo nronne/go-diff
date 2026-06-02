@@ -14,7 +14,7 @@ import pytest
 
 from go_diff.controllers.temperature import TemperatureSchedule
 from go_diff.controllers.sample import SampleController
-from go_diff.filter import Filter, MinEnergyFilter, MaxEnergyFilter
+from go_diff.filter import Filter, MinEnergyFilter, MaxEnergyFilter, MinDistFilter
 from go_diff.go_diff import GODiff
 
 
@@ -48,47 +48,40 @@ def _make_godiff(**kwargs) -> GODiff:
 
 
 # ---------------------------------------------------------------------------
-# check_min_dist
+# MinDistFilter
 # ---------------------------------------------------------------------------
 
-class TestCheckMinDist:
+class TestMinDistFilter:
     def test_accepts_well_separated(self):
         from ase import Atoms
         from ase.calculators.singlepoint import SinglePointCalculator as SPC
-        gd = _make_godiff()
-        # 3 atoms spaced 2 Å apart
         atoms = Atoms("HHH", positions=[[0, 0, 0], [2, 0, 0], [4, 0, 0]])
         atoms.calc = SPC(atoms, energy=-1.0, forces=np.zeros((3, 3)))
-        result = gd.check_min_dist([atoms], min_dist=1.0)
-        assert len(result) == 1
+        assert MinDistFilter(1.0)(atoms) is True
 
     def test_rejects_close_atoms(self):
         from ase import Atoms
         from ase.calculators.singlepoint import SinglePointCalculator as SPC
-        gd = _make_godiff()
         atoms = Atoms("HH", positions=[[0, 0, 0], [0.1, 0, 0]])
         atoms.calc = SPC(atoms, energy=-1.0, forces=np.zeros((2, 3)))
-        result = gd.check_min_dist([atoms], min_dist=1.0)
-        assert len(result) == 0
+        assert MinDistFilter(1.0)(atoms) is False
 
     def test_single_atom_always_passes(self):
         from ase import Atoms
         from ase.calculators.singlepoint import SinglePointCalculator as SPC
-        gd = _make_godiff()
         atoms = Atoms("H", positions=[[0, 0, 0]])
         atoms.calc = SPC(atoms, energy=-1.0, forces=np.zeros((1, 3)))
-        result = gd.check_min_dist([atoms], min_dist=1.0)
-        assert len(result) == 1
+        assert MinDistFilter(1.0)(atoms) is True
 
-    def test_mixed_list(self):
+    def test_mixed_list_via_valid_structure_filters(self):
         from ase import Atoms
         from ase.calculators.singlepoint import SinglePointCalculator as SPC
-        gd = _make_godiff()
         good = Atoms("HH", positions=[[0, 0, 0], [3, 0, 0]])
         good.calc = SPC(good, energy=-1.0, forces=np.zeros((2, 3)))
         bad = Atoms("HH", positions=[[0, 0, 0], [0.1, 0, 0]])
         bad.calc = SPC(bad, energy=-2.0, forces=np.zeros((2, 3)))
-        result = gd.check_min_dist([good, bad], min_dist=1.0)
+        gd = _make_godiff(valid_structure_filters=[MinDistFilter(1.0)])
+        result = gd._apply_valid_structure_filters([good, bad])
         assert len(result) == 1
         assert result[0] is good
 

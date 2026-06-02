@@ -68,3 +68,35 @@ class MaxEnergyFilter:
         return atoms.get_potential_energy() < self.threshold
 
 
+class MinDistFilter:
+    """Keep only structures where all pairwise interatomic distances are at
+    least *min_dist*.
+
+    Parameters
+    ----------
+    min_dist : float
+        Minimum allowed distance (Å) between any pair of atoms.  Structures
+        with any pair closer than this threshold are discarded.
+        Default: 1.0.
+
+    Examples
+    --------
+    Supply as a :attr:`~go_diff.GODiff.valid_structure_filters` entry to
+    replace the former hard-coded ``check_min_dist`` call::
+
+        from go_diff.filter import MinDistFilter
+        valid_structure_filters = [MinDistFilter(1.0)]
+    """
+
+    def __init__(self, min_dist: float = 1.0) -> None:
+        self.min_dist = min_dist
+
+    def __call__(self, atoms: Atoms) -> bool:
+        positions = atoms.get_positions()
+        dists = np.linalg.norm(
+            positions[:, np.newaxis] - positions, axis=-1
+        )
+        np.fill_diagonal(dists, np.inf)
+        return float(np.min(dists)) >= self.min_dist
+
+

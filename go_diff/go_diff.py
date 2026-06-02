@@ -111,7 +111,9 @@ class GODiff:
         Discarded structures are never added to ``all_data`` or the buffer.
         Defaults to ``None`` (no filtering).  Pass
         ``[MinEnergyFilter(-500.0)]`` to replicate the former
-        ``GODiff(min_E=-500.0)`` behaviour.
+        ``GODiff(min_E=-500.0)`` behaviour.  Use :class:`~go_diff.filter.MinDistFilter`
+        to enforce a minimum interatomic distance, e.g.
+        ``[MinDistFilter(1.0)]``.
     buffer_filters : list of Filter, optional
         Sequence of callables ``(atoms: Atoms) -> bool`` applied when
         rebuilding the buffer from ``all_data``.  A structure from
@@ -270,37 +272,6 @@ class GODiff:
                 atoms.calc.name = f"Iteration{iteration}"
 
         return atoms_list
-
-    def check_min_dist(
-        self,
-        atoms_list: list[Atoms],
-        min_dist: float = 1.0,
-    ) -> list[Atoms]:
-        """Filter structures with interatomic distances below *min_dist*.
-
-        Parameters
-        ----------
-        atoms_list : list of ase.Atoms
-            Structures to filter.
-        min_dist : float
-            Minimum allowed distance (Å) between any pair of atoms.
-            Default: 1.0.
-
-        Returns
-        -------
-        list of ase.Atoms
-            Structures in which all pairwise distances are ≥ *min_dist*.
-        """
-        filtered: list[Atoms] = []
-        for atoms in atoms_list:
-            positions = atoms.get_positions()
-            dists = np.linalg.norm(
-                positions[:, np.newaxis] - positions, axis=-1
-            )
-            np.fill_diagonal(dists, np.inf)
-            if float(np.min(dists)) >= min_dist:
-                filtered.append(atoms)
-        return filtered
 
     # ------------------------------------------------------------------
     # Boltzmann weighting helpers
@@ -528,7 +499,6 @@ class GODiff:
         ):
             t0 = time.perf_counter()
             new_samples = self.sample(exclude_keys=exclude_sample_keys)
-            new_samples = self.check_min_dist(new_samples, min_dist=1.0)
             sampling_wall_s += time.perf_counter() - t0
 
             t0 = time.perf_counter()
