@@ -73,7 +73,7 @@ class TestMinDistFilter:
         atoms.calc = SPC(atoms, energy=-1.0, forces=np.zeros((1, 3)))
         assert MinDistFilter(1.0)(atoms) is True
 
-    def test_mixed_list_via_valid_structure_filters(self):
+    def test_filters_mixed_structures(self):
         from ase import Atoms
         from ase.calculators.singlepoint import SinglePointCalculator as SPC
         good = Atoms("HH", positions=[[0, 0, 0], [3, 0, 0]])
