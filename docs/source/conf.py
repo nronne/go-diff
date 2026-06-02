@@ -6,10 +6,15 @@
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
+import os
+
 project = 'GO-Diff'
 copyright = '2025, Nikolaj Rønne'
 author = 'Nikolaj Rønne'
-release = '1.0.0'
+
+_version_file = os.path.join(os.path.dirname(__file__), '..', '..', 'VERSION')
+with open(_version_file) as _f:
+    release = _f.read().strip()
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
