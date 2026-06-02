@@ -2,78 +2,84 @@ Quickstart: Pt adatom on a Pt slab
 ===================================
 
 This end-to-end example reproduces the Pt heptamer search from the paper.
-It places a single Pt adatom on a Pt(1,2,2) × 5-layer slab, using MACE-MP
+It places a single Pt adatom on a Pt(1,2,2) × 5-layer slab, using MACE MLIP
 as the energy/force calculator.
 
 Prerequisites
 -------------
 
-Make sure you have completed the :doc:`../installation` steps and have both
-MACE and the full AGeDi backend available:
+Make sure you have completed the :doc:`../installation` steps and have 
+the MACE MLIP available:
 
 .. code-block:: console
 
    pip install mace-torch
-   pip install "agedi[full]"
 
 Full script
 -----------
 
 .. code-block:: python
-
+		
    import numpy as np
-   from ase.build import surface
+
+   from ase.build import fcc111, surface
    from mace.calculators import mace_mp
-   from agedi import create_diffusion
 
-   from go_diff import GODiff
-   from go_diff.controllers import (
-       TemperatureSchedule,
-       SampleController,
-       MomentumConsensusStop,
-   )
-   from go_diff.noisers import WeightedPositions
+   from agedi import AtomsGraph, create_diffusion
+   from agedi.diffusion import ForcefieldGuidanceConfig
 
-   # 1. Calculator
-   calc = mace_mp(
-       model="medium",
-       dispersion=False,
-       default_dtype="float32",
-       device="cuda",
-   )
+   from go_diff import GODiff, MinEnergyFilter
+   from go_diff.controllers import SampleController, BufferController, TemperatureSchedule, MomentumConsensusStop
+   from go_diff.noisers import WeightedConfinedCellPositions
 
-   # 2. Substrate template (atoms to keep fixed)
-   template = surface("Pt", (1, 2, 2), 5, vacuum=8.0)
+   ##### SYSTEM #####
+   formula = "Pt"
+
+   template = surface('Pt', (1,2,2), 5, vacuum=8.0)
    template.positions[:, 2] -= template.positions[:, 2].min()
-   confinement = [0.0, 4.0 + template.positions[:, 2].max()]
 
-   # 3. Diffusion model (AGeDi)
-   diffusion = create_diffusion(noisers=(WeightedPositions(),))
+   confinement_above_zmax = np.array([0.0, 4.0])
+   confinement = confinement_above_zmax + template.positions[:, 2].max()
 
-   # 4. GO-Diff optimiser
+
+   ##### CALCULATOR #####
+   from mace.calculators import mace_mp
+   calc = mace_mp(model="medium", dispersion=False, default_dtype="float32", device='cuda')
+
+
+   #### DIFFUSION MODEL #####
+   diffusion = create_diffusion(noisers=(WeightedConfinedCellPositions(),), force_field=True)
+
+
+   #### GO-DIFF #####
    godiff = GODiff(
        calculator=calc,
        diffusion=diffusion,
        temperature_schedule=TemperatureSchedule(fast=0.5, slow=0.9),
        sample_controller=SampleController(initial_N=16, target_ess=8),
-       training_controller=MomentumConsensusStop(
-           min_steps=100, patience=250, drop_factor=0.9
-       ),
+       buffer_controller=BufferController(initial_buffer_size=16, max_buffer_size=96, adaption_rate=0.2),
+       training_controller=MomentumConsensusStop(min_steps=100, patience=250, drop_factor=0.9),
        sample_config={
-           "template": template,
-           "atomic_numbers": [78],   # one Pt adatom
+	   "template": template,
+	   "formula": formula,
+	   "confinement": confinement,
+	   "ff_guidance": ForcefieldGuidanceConfig(guidance=1.0,)
        },
        dataset_config={
-           "mask": "MaskFixed",
-           "confinement": confinement,
+	   "mask": "MaskFixed",
+	   "confinement": confinement,
+	   "regressor_data": "all_data", # use all data for training the regressor, not just the data in the buffer
        },
-       initial_buffer_size=16,
-       min_E=-200,
+       trainer_config={
+	   "name": name
+       },
+       min_E=min_E,
+       valid_structure_filters=[MinEnergyFilter(-200)],    
    )
 
-   # 5. Run
-   final_checkpoint = godiff.run(max_iterations=50)
-   print(f"Model saved to {final_checkpoint}")
+   #### RUN GO-Diff #####
+   godiff.run(max_iterations=20)
+
 
 Step-by-step walkthrough
 ------------------------
@@ -110,8 +116,8 @@ z-coordinate range within which new atoms are generated.  Setting
 
 **GODiff.run**
 
-Calling ``godiff.run(max_iterations=50)`` starts the outer loop.  Output is
-written to a timestamped directory (``godiff_<timestamp>/``) containing:
+Calling ``godiff.run(max_iterations=20)`` starts the outer loop.  Output is
+written to a logs directory  containing:
 
 * ``all_data.traj`` – all evaluated structures sorted by energy.
 * ``iteration_data_T<temp>.traj`` – per-iteration structures.
@@ -122,7 +128,7 @@ Monitoring with TensorBoard
 
 .. code-block:: console
 
-   tensorboard --logdir godiff_<timestamp>/lightning_logs
+   tensorboard --logdir ...
 
 Key scalars to watch:
 
@@ -134,13 +140,4 @@ Key scalars to watch:
 Reproducing paper scripts
 --------------------------
 
-The ``scripts/`` directory contains the scripts used to produce the paper
-results:
-
-* ``scripts/heptamer.py`` – Pt heptamer search (main result).
-* ``scripts/heptamer_ffg.py`` – heptamer search with force-field guidance.
-* ``scripts/heptamer_transfer.py`` – transfer from a pre-trained checkpoint.
-* ``scripts/stepped_Pt.py`` – stepped Pt surface search.
-
-Additional utilities for identifying the Pt heptamer structure are in
-``utils/``.
+The ``scripts/`` directory contains the several useful scripts.

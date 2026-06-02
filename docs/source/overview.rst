@@ -4,7 +4,7 @@ Overview
 What GO-Diff is
 ---------------
 
-GO-Diff (Gradient-Optimised Diffusion) is a framework for atomistic global
+GO-Diff is a framework for atomistic global
 structure search using diffusion models.  It wraps the
 `AGeDi <https://github.com/nronne/agedi>`_ diffusion backend with an outer
 optimisation loop that drives the model towards low-energy configurations via
@@ -58,5 +58,6 @@ Typical workflow
 3. Instantiate :class:`~go_diff.GODiff` with the calculator, diffusion model,
    and desired controllers.
 4. Call :py:meth:`~go_diff.GODiff.run` to start the optimisation loop.
-5. Inspect saved checkpoints and trajectory files in the output directory.
-6. Analyse TensorBoard logs for energy, ESS, and gradient-agreement curves.
+5. Inspect saved checkpoints and trajectory files in the output
+   directory and TensorBoard logs.
+

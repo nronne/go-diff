@@ -10,14 +10,12 @@ Sampling pitfalls
 
 - **All sampled structures are filtered out**
 
-  GO-Diff discards structures with energy below ``min_E`` (default: -500 eV)
-  and structures with interatomic distances below 1.0 Å.  If every structure
-  in an iteration is rejected the buffer will be empty and training cannot
-  proceed.
+  GO-Diff can use filters defined through ``valid_structure_filters``
+  such as ``MinEnergyFilter`` to discard unphysical structures before
+  contaminating the search. 
 
-  *Fix*: lower ``min_E`` if your system legitimately reaches very negative
-  energies, or check that the confinement bounds are physically reasonable
-  so structures do not overlap.
+  *Fix*: Change ``valid_structure_filters`` to fit the system you are
+  investigating.
 
 - **ESS target never reached**
 
