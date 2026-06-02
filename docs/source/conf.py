@@ -13,8 +13,11 @@ copyright = '2025, Nikolaj Rønne'
 author = 'Nikolaj Rønne'
 
 _version_file = os.path.join(os.path.dirname(__file__), '..', '..', 'VERSION')
-with open(_version_file) as _f:
-    release = _f.read().strip()
+try:
+    with open(_version_file) as _f:
+        release = _f.read().strip()
+except OSError as e:
+    raise RuntimeError(f"Could not read VERSION file at {_version_file}: {e}") from e
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
