@@ -110,6 +110,9 @@ z-coordinate range within which new atoms are generated.  Setting
 * ``SampleController(initial_N=16, target_ess=8)`` – collects at least 16
   structures on the first iteration; on subsequent iterations it keeps sampling
   until ESS ≥ 8.
+* ``BufferController(initial_buffer_size=16, max_buffer_size=96, adaptation_rate=0.2)``
+  – starts with a buffer of 16 structures and smoothly adapts its size towards
+  the current ESS at each iteration, capped at 96.
 * ``MomentumConsensusStop(min_steps=100, patience=250, drop_factor=0.9)``
   – waits at least 100 training steps then stops when gradient–momentum
   agreement has been below 90 % of its peak for 250 steps.

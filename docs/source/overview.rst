@@ -34,6 +34,9 @@ High-level package layout
     dimensionless heat capacity C(T) = Var(E) / T²
   - ``SampleController``: stops sampling when the Effective Sample Size (ESS)
     reaches a target threshold
+  - ``BufferController``: adaptively updates the replay buffer size using an
+    ESS-based exponential smoothing update, bounded by configurable min/max
+    values
   - ``MomentumConsensusStop``: stops training when gradient–momentum cosine
     similarity drops below a fraction of its peak value
   - ``AdaptiveRefinementStop``: alternative stop criterion based on split-batch

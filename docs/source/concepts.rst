@@ -73,15 +73,17 @@ continues sampling until the ESS exceeds a configurable target.
 Adaptive buffer size
 --------------------
 
-The buffer size is adapted each iteration using a smoothed update towards the
-current ESS. E.g. for `adaptation_rate=0.2`:
+The :class:`~go_diff.controllers.BufferController` adapts the buffer size each
+iteration using a smoothed update towards the current ESS.  E.g. for
+``adaptation_rate=0.2``:
 
 .. code-block:: text
 
    buffer_size ← 0.8 · buffer_size + 0.2 · ESS
 
-This ensures the buffer captures the effective diversity of the current
-ensemble without becoming excessively large.
+The result is clipped to ``[min_buffer_size, max_buffer_size]``.  This ensures
+the buffer captures the effective diversity of the current ensemble without
+becoming excessively large.
 
 Training stop criteria
 -----------------------
