@@ -106,6 +106,10 @@ class GODiff:
         iteration.  Default: 32.
     max_steps_per_loop : int
         Maximum number of training steps per GO-Diff iteration.  Default: 500.
+    seed_structures : list of ase.Atoms or None, optional
+        Structures to seed the initial buffer and dataset.  If provided, these are evaluated
+        with the calculator and added to ``all_data`` and no sampling is performed on the
+        first iteration.  Defaults to ``None`` (empty initial dataset).
     after_sample_filters : list of Filter, optional
         Sequence of callables ``(atoms: Atoms) -> bool`` applied right after
         sampling and **before** energy/force evaluation.  Only structures
@@ -146,6 +150,7 @@ class GODiff:
         batch_size: int = 32,
         sample_batch_size: int = 16,
         max_steps_per_loop: int = 500,
+        seed_structures: list | None = None,
         after_sample_filters: list[Filter] | None = None,
         after_potential_filters: list[Filter] | None = None,
         valid_structure_filters: list[Filter] | None = None,
@@ -166,6 +171,7 @@ class GODiff:
         self.batch_size: int = batch_size
         self.sample_batch_size: int = sample_batch_size
         self.max_steps_per_loop: int = max_steps_per_loop
+        self.seed_structures: list[Atoms] | None = seed_structures
         self.after_sample_filters: list[Filter] = (
             after_sample_filters if after_sample_filters is not None else [MinDistFilter(1.0)]
         )
@@ -539,21 +545,30 @@ class GODiff:
         evaluation_wall_s = 0.0
         iteration_data: list[Atoms] = []
 
-        while self.sample_controller.continue_sampling(
-            [a.get_potential_energy() for a in iteration_data],
-            current_temperature,
-        ):
+        if iteration == 0 and self.seed_structures is not None:
             t0 = time.perf_counter()
-            new_samples = self.sample(exclude_keys=exclude_sample_keys)
-            sampling_wall_s += time.perf_counter() - t0
-            new_samples = self._apply_after_sample_filters(new_samples)
-
-            t0 = time.perf_counter()
-            new_samples = self.evaluate(new_samples, iteration=iteration)
+            new_samples = self.evaluate(self.seed_structures, iteration=iteration)
             evaluation_wall_s += time.perf_counter() - t0
 
             new_samples = self._apply_after_potential_filters(new_samples)
             iteration_data.extend(new_samples)
+
+        else:
+            while self.sample_controller.continue_sampling(
+                [a.get_potential_energy() for a in iteration_data],
+                current_temperature,
+            ):
+                t0 = time.perf_counter()
+                new_samples = self.sample(exclude_keys=exclude_sample_keys)
+                sampling_wall_s += time.perf_counter() - t0
+                new_samples = self._apply_after_sample_filters(new_samples)
+
+                t0 = time.perf_counter()
+                new_samples = self.evaluate(new_samples, iteration=iteration)
+                evaluation_wall_s += time.perf_counter() - t0
+
+                new_samples = self._apply_after_potential_filters(new_samples)
+                iteration_data.extend(new_samples)
 
         # Save this iteration's structures
         name = f"{current_temperature:.3f}" if current_temperature is not None else "initial"
