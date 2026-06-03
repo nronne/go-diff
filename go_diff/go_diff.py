@@ -23,6 +23,7 @@ from .filter import (
     Filter,
     MinEnergyFilter,
     MaxEnergyFilter,
+    MinDistFilter,
 )
 from go_diff.controllers import (
     TemperatureSchedule,
@@ -105,15 +106,20 @@ class GODiff:
         iteration.  Default: 32.
     max_steps_per_loop : int
         Maximum number of training steps per GO-Diff iteration.  Default: 500.
-    valid_structure_filters : list of Filter or None, optional
+    after_sample_filter : list of Filter, optional
+        Sequence of callables ``(atoms: Atoms) -> bool`` applied right after
+        sampling and **before** energy/force evaluation.  Only structures
+        passing every filter are forwarded to the calculator.  Defaults to
+        ``[MinDistFilter(1.0)]``, which replicates the former hard-coded
+        ``check_min_dist`` call.  Pass ``[]`` to disable pre-evaluation
+        filtering.
+    after_potential_filter : list of Filter or None, optional
         Sequence of callables ``(atoms: Atoms) -> bool`` applied right after
         energy/force evaluation to discard physically unreasonable structures.
         Discarded structures are never added to ``all_data`` or the buffer.
         Defaults to ``None`` (no filtering).  Pass
         ``[MinEnergyFilter(-500.0)]`` to replicate the former
-        ``GODiff(min_E=-500.0)`` behaviour.  Use :class:`~go_diff.filter.MinDistFilter`
-        to enforce a minimum interatomic distance, e.g.
-        ``[MinDistFilter(1.0)]``.
+        ``GODiff(min_E=-500.0)`` behaviour.
     buffer_filters : list of Filter, optional
         Sequence of callables ``(atoms: Atoms) -> bool`` applied when
         rebuilding the buffer from ``all_data``.  A structure from
@@ -140,7 +146,8 @@ class GODiff:
         batch_size: int = 32,
         sample_batch_size: int = 16,
         max_steps_per_loop: int = 500,
-        valid_structure_filters: list[Filter] | None = None,
+        after_sample_filter: list[Filter] | None = None,
+        after_potential_filter: list[Filter] | None = None,
         buffer_filters: list[Filter] | None = None,
         device: str = "cuda",
     ) -> None:
@@ -158,7 +165,10 @@ class GODiff:
         self.batch_size: int = batch_size
         self.sample_batch_size: int = sample_batch_size
         self.max_steps_per_loop: int = max_steps_per_loop
-        self.valid_structure_filters: list[Filter] | None = valid_structure_filters
+        self.after_sample_filter: list[Filter] = (
+            after_sample_filter if after_sample_filter is not None else [MinDistFilter(1.0)]
+        )
+        self.after_potential_filter: list[Filter] | None = after_potential_filter
         self.buffer_filters: list[Filter] = (
             buffer_filters if buffer_filters is not None else [MaxEnergyFilter(0.0)]
         )
@@ -388,10 +398,34 @@ class GODiff:
     # Buffer management
     # ------------------------------------------------------------------
 
-    def _apply_valid_structure_filters(self, data: list[Atoms]) -> list[Atoms]:
-        """Apply :attr:`valid_structure_filters` to *data* and return survivors.
+    def _apply_after_sample_filters(self, data: list[Atoms]) -> list[Atoms]:
+        """Apply :attr:`after_sample_filter` to *data* and return survivors.
 
-        When :attr:`valid_structure_filters` is ``None`` (the default), all
+        Called right after sampling and before energy/force evaluation.
+        When :attr:`after_sample_filter` is empty, all structures are returned
+        unchanged.  Otherwise a structure is kept only when **every** filter
+        returns ``True``.
+
+        Parameters
+        ----------
+        data : list of ase.Atoms
+
+        Returns
+        -------
+        list of ase.Atoms
+        """
+        if not self.after_sample_filter:
+            return data
+        return [
+            atoms for atoms in data
+            if all(f(atoms) for f in self.after_sample_filter)
+        ]
+
+    def _apply_after_potential_filters(self, data: list[Atoms]) -> list[Atoms]:
+        """Apply :attr:`after_potential_filter` to *data* and return survivors.
+
+        Called right after energy/force evaluation.
+        When :attr:`after_potential_filter` is ``None`` (the default), all
         structures are returned unchanged.  Otherwise a structure is kept only
         when **every** filter returns ``True``.
 
@@ -403,11 +437,11 @@ class GODiff:
         -------
         list of ase.Atoms
         """
-        if not self.valid_structure_filters:
+        if not self.after_potential_filter:
             return data
         return [
             atoms for atoms in data
-            if all(f(atoms) for f in self.valid_structure_filters)
+            if all(f(atoms) for f in self.after_potential_filter)
         ]
 
     def update_buffer(self) -> None:
@@ -499,13 +533,14 @@ class GODiff:
         ):
             t0 = time.perf_counter()
             new_samples = self.sample(exclude_keys=exclude_sample_keys)
+            new_samples = self._apply_after_sample_filters(new_samples)
             sampling_wall_s += time.perf_counter() - t0
 
             t0 = time.perf_counter()
             new_samples = self.evaluate(new_samples, iteration=iteration)
             evaluation_wall_s += time.perf_counter() - t0
 
-            new_samples = self._apply_valid_structure_filters(new_samples)
+            new_samples = self._apply_after_potential_filters(new_samples)
             iteration_data.extend(new_samples)
 
         # Save this iteration's structures
