@@ -106,14 +106,14 @@ class GODiff:
         iteration.  Default: 32.
     max_steps_per_loop : int
         Maximum number of training steps per GO-Diff iteration.  Default: 500.
-    after_sample_filter : list of Filter, optional
+    after_sample_filters : list of Filter, optional
         Sequence of callables ``(atoms: Atoms) -> bool`` applied right after
         sampling and **before** energy/force evaluation.  Only structures
         passing every filter are forwarded to the calculator.  Defaults to
         ``[MinDistFilter(1.0)]``, which replicates the former hard-coded
         ``check_min_dist`` call.  Pass ``[]`` to disable pre-evaluation
         filtering.
-    after_potential_filter : list of Filter or None, optional
+    after_potential_filters : list of Filter or None, optional
         Sequence of callables ``(atoms: Atoms) -> bool`` applied right after
         energy/force evaluation to discard physically unreasonable structures.
         Discarded structures are never added to ``all_data`` or the buffer.
@@ -146,9 +146,9 @@ class GODiff:
         batch_size: int = 32,
         sample_batch_size: int = 16,
         max_steps_per_loop: int = 500,
-        after_sample_filter: list[Filter] | None = None,
-        after_potential_filter: list[Filter] | None = None,
-        valid_structure_filter: list[Filter] | None = None,
+        after_sample_filters: list[Filter] | None = None,
+        after_potential_filters: list[Filter] | None = None,
+        valid_structure_filters: list[Filter] | None = None,
         buffer_filters: list[Filter] | None = None,
         device: str = "cuda",
     ) -> None:
@@ -166,11 +166,11 @@ class GODiff:
         self.batch_size: int = batch_size
         self.sample_batch_size: int = sample_batch_size
         self.max_steps_per_loop: int = max_steps_per_loop
-        self.after_sample_filter: list[Filter] = (
-            after_sample_filter if after_sample_filter is not None else [MinDistFilter(1.0)]
+        self.after_sample_filters: list[Filter] = (
+            after_sample_filters if after_sample_filters is not None else [MinDistFilter(1.0)]
         )
         
-        self.after_potential_filter: list[Filter] | None = after_potential_filter
+        self.after_potential_filters: list[Filter] | None = after_potential_filters
         if valid_structure_filters is not None:
             warnings.warn(
                 "Passing valid_structure_filters to the GODiff constructor is deprecated and will be removed in a future release. "
@@ -411,10 +411,10 @@ class GODiff:
     # ------------------------------------------------------------------
 
     def _apply_after_sample_filters(self, data: list[Atoms]) -> list[Atoms]:
-        """Apply :attr:`after_sample_filter` to *data* and return survivors.
+        """Apply :attr:`after_sample_filters` to *data* and return survivors.
 
         Called right after sampling and before energy/force evaluation.
-        When :attr:`after_sample_filter` is empty, all structures are returned
+        When :attr:`after_sample_filters` is empty, all structures are returned
         unchanged.  Otherwise a structure is kept only when **every** filter
         returns ``True``.
 
@@ -426,18 +426,18 @@ class GODiff:
         -------
         list of ase.Atoms
         """
-        if not self.after_sample_filter:
+        if not self.after_sample_filters:
             return data
         return [
             atoms for atoms in data
-            if all(f(atoms) for f in self.after_sample_filter)
+            if all(f(atoms) for f in self.after_sample_filters)
         ]
 
     def _apply_after_potential_filters(self, data: list[Atoms]) -> list[Atoms]:
-        """Apply :attr:`after_potential_filter` to *data* and return survivors.
+        """Apply :attr:`after_potential_filters` to *data* and return survivors.
 
         Called right after energy/force evaluation.
-        When :attr:`after_potential_filter` is ``None`` (the default), all
+        When :attr:`after_potential_filters` is ``None`` (the default), all
         structures are returned unchanged.  Otherwise a structure is kept only
         when **every** filter returns ``True``.
 
@@ -449,11 +449,11 @@ class GODiff:
         -------
         list of ase.Atoms
         """
-        if not self.after_potential_filter:
+        if not self.after_potential_filters:
             return data
         return [
             atoms for atoms in data
-            if all(f(atoms) for f in self.after_potential_filter)
+            if all(f(atoms) for f in self.after_potential_filters)
         ]
 
     def update_buffer(self) -> None:
