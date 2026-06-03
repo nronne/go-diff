@@ -67,7 +67,7 @@ godiff = GODiff(
         "name": name
     },
     min_E=min_E,
-    valid_structure_filters=[MinEnergyFilter(min_E)],    
+    after_potential_filter=[MinEnergyFilter(min_E)],    
 )
 
 # Train the model

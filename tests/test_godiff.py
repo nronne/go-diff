@@ -14,7 +14,7 @@ import pytest
 
 from go_diff.controllers.temperature import TemperatureSchedule
 from go_diff.controllers.sample import SampleController
-from go_diff.filter import Filter, MinEnergyFilter, MaxEnergyFilter
+from go_diff.filter import Filter, MinEnergyFilter, MaxEnergyFilter, MinDistFilter
 from go_diff.go_diff import GODiff
 
 
@@ -48,47 +48,40 @@ def _make_godiff(**kwargs) -> GODiff:
 
 
 # ---------------------------------------------------------------------------
-# check_min_dist
+# MinDistFilter
 # ---------------------------------------------------------------------------
 
-class TestCheckMinDist:
+class TestMinDistFilter:
     def test_accepts_well_separated(self):
         from ase import Atoms
         from ase.calculators.singlepoint import SinglePointCalculator as SPC
-        gd = _make_godiff()
-        # 3 atoms spaced 2 Å apart
         atoms = Atoms("HHH", positions=[[0, 0, 0], [2, 0, 0], [4, 0, 0]])
         atoms.calc = SPC(atoms, energy=-1.0, forces=np.zeros((3, 3)))
-        result = gd.check_min_dist([atoms], min_dist=1.0)
-        assert len(result) == 1
+        assert MinDistFilter(1.0)(atoms) is True
 
     def test_rejects_close_atoms(self):
         from ase import Atoms
         from ase.calculators.singlepoint import SinglePointCalculator as SPC
-        gd = _make_godiff()
         atoms = Atoms("HH", positions=[[0, 0, 0], [0.1, 0, 0]])
         atoms.calc = SPC(atoms, energy=-1.0, forces=np.zeros((2, 3)))
-        result = gd.check_min_dist([atoms], min_dist=1.0)
-        assert len(result) == 0
+        assert MinDistFilter(1.0)(atoms) is False
 
     def test_single_atom_always_passes(self):
         from ase import Atoms
         from ase.calculators.singlepoint import SinglePointCalculator as SPC
-        gd = _make_godiff()
         atoms = Atoms("H", positions=[[0, 0, 0]])
         atoms.calc = SPC(atoms, energy=-1.0, forces=np.zeros((1, 3)))
-        result = gd.check_min_dist([atoms], min_dist=1.0)
-        assert len(result) == 1
+        assert MinDistFilter(1.0)(atoms) is True
 
-    def test_mixed_list(self):
+    def test_filters_mixed_structures(self):
         from ase import Atoms
         from ase.calculators.singlepoint import SinglePointCalculator as SPC
-        gd = _make_godiff()
         good = Atoms("HH", positions=[[0, 0, 0], [3, 0, 0]])
         good.calc = SPC(good, energy=-1.0, forces=np.zeros((2, 3)))
         bad = Atoms("HH", positions=[[0, 0, 0], [0.1, 0, 0]])
         bad.calc = SPC(bad, energy=-2.0, forces=np.zeros((2, 3)))
-        result = gd.check_min_dist([good, bad], min_dist=1.0)
+        gd = _make_godiff(after_potential_filters=[MinDistFilter(1.0)])
+        result = gd._apply_after_potential_filters([good, bad])
         assert len(result) == 1
         assert result[0] is good
 
@@ -269,33 +262,33 @@ class TestFilterProtocol:
 
 class TestApplyValidStructureFilters:
     def test_single_filter(self):
-        gd = _make_godiff(valid_structure_filters=[MinEnergyFilter(-5.0)])
+        gd = _make_godiff(after_potential_filters=[MinEnergyFilter(-5.0)])
         data = [_make_atoms(-3.0), _make_atoms(-10.0), _make_atoms(-1.0)]
-        result = gd._apply_valid_structure_filters(data)
+        result = gd._apply_after_potential_filters(data)
         assert len(result) == 2
         assert all(a.get_potential_energy() > -5.0 for a in result)
 
     def test_multiple_filters_stacked(self):
         # Keep only structures with -4.0 < e < -0.5
-        gd = _make_godiff(valid_structure_filters=[
+        gd = _make_godiff(after_potential_filters=[
             MinEnergyFilter(-4.0),
             MaxEnergyFilter(-0.5),
         ])
         data = [_make_atoms(-1.0), _make_atoms(-2.0), _make_atoms(-5.0), _make_atoms(-0.1)]
-        result = gd._apply_valid_structure_filters(data)
+        result = gd._apply_after_potential_filters(data)
         assert len(result) == 2
         assert all(-4.0 < a.get_potential_energy() < -0.5 for a in result)
 
     def test_none_filters_keeps_all(self):
-        gd = _make_godiff(valid_structure_filters=None)
+        gd = _make_godiff(after_potential_filters=None)
         data = [_make_atoms(-1.0), _make_atoms(-600.0)]
-        result = gd._apply_valid_structure_filters(data)
+        result = gd._apply_after_potential_filters(data)
         assert len(result) == 2
 
     def test_empty_filters_keeps_all(self):
-        gd = _make_godiff(valid_structure_filters=[])
+        gd = _make_godiff(after_potential_filters=[])
         data = [_make_atoms(-1.0), _make_atoms(-600.0)]
-        result = gd._apply_valid_structure_filters(data)
+        result = gd._apply_after_potential_filters(data)
         assert len(result) == 2
 
 

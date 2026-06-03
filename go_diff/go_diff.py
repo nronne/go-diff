@@ -23,6 +23,7 @@ from .filter import (
     Filter,
     MinEnergyFilter,
     MaxEnergyFilter,
+    MinDistFilter,
 )
 from go_diff.controllers import (
     TemperatureSchedule,
@@ -105,7 +106,18 @@ class GODiff:
         iteration.  Default: 32.
     max_steps_per_loop : int
         Maximum number of training steps per GO-Diff iteration.  Default: 500.
-    valid_structure_filters : list of Filter or None, optional
+    seed_structures : list of ase.Atoms or None, optional
+        Structures to seed the initial buffer and dataset.  If provided, these are evaluated
+        with the calculator and added to ``all_data`` and no sampling is performed on the
+        first iteration.  Defaults to ``None`` (empty initial dataset).
+    after_sample_filters : list of Filter, optional
+        Sequence of callables ``(atoms: Atoms) -> bool`` applied right after
+        sampling and **before** energy/force evaluation.  Only structures
+        passing every filter are forwarded to the calculator.  Defaults to
+        ``[MinDistFilter(1.0)]``, which replicates the former hard-coded
+        ``check_min_dist`` call.  Pass ``[]`` to disable pre-evaluation
+        filtering.
+    after_potential_filters : list of Filter or None, optional
         Sequence of callables ``(atoms: Atoms) -> bool`` applied right after
         energy/force evaluation to discard physically unreasonable structures.
         Discarded structures are never added to ``all_data`` or the buffer.
@@ -138,6 +150,9 @@ class GODiff:
         batch_size: int = 32,
         sample_batch_size: int = 16,
         max_steps_per_loop: int = 500,
+        seed_structures: list | None = None,
+        after_sample_filters: list[Filter] | None = None,
+        after_potential_filters: list[Filter] | None = None,
         valid_structure_filters: list[Filter] | None = None,
         buffer_filters: list[Filter] | None = None,
         device: str = "cuda",
@@ -156,7 +171,23 @@ class GODiff:
         self.batch_size: int = batch_size
         self.sample_batch_size: int = sample_batch_size
         self.max_steps_per_loop: int = max_steps_per_loop
-        self.valid_structure_filters: list[Filter] | None = valid_structure_filters
+        self.seed_structures: list[Atoms] | None = seed_structures
+        self.after_sample_filters: list[Filter] = (
+            after_sample_filters if after_sample_filters is not None else [MinDistFilter(1.0)]
+        )
+        
+        self.after_potential_filters: list[Filter] | None = after_potential_filters
+        if valid_structure_filters is not None:
+            import warnings
+            warnings.warn(
+                "Passing valid_structure_filters to the GODiff constructor is deprecated and will be removed in a future release. "
+                "Please apply these filters manually in the sample_stage method instead.",
+                DeprecationWarning,
+            )
+            self.after_potential_filters = valid_structure_filters
+            
+
+            
         self.buffer_filters: list[Filter] = (
             buffer_filters if buffer_filters is not None else [MaxEnergyFilter(0.0)]
         )
@@ -270,37 +301,6 @@ class GODiff:
                 atoms.calc.name = f"Iteration{iteration}"
 
         return atoms_list
-
-    def check_min_dist(
-        self,
-        atoms_list: list[Atoms],
-        min_dist: float = 1.0,
-    ) -> list[Atoms]:
-        """Filter structures with interatomic distances below *min_dist*.
-
-        Parameters
-        ----------
-        atoms_list : list of ase.Atoms
-            Structures to filter.
-        min_dist : float
-            Minimum allowed distance (Å) between any pair of atoms.
-            Default: 1.0.
-
-        Returns
-        -------
-        list of ase.Atoms
-            Structures in which all pairwise distances are ≥ *min_dist*.
-        """
-        filtered: list[Atoms] = []
-        for atoms in atoms_list:
-            positions = atoms.get_positions()
-            dists = np.linalg.norm(
-                positions[:, np.newaxis] - positions, axis=-1
-            )
-            np.fill_diagonal(dists, np.inf)
-            if float(np.min(dists)) >= min_dist:
-                filtered.append(atoms)
-        return filtered
 
     # ------------------------------------------------------------------
     # Boltzmann weighting helpers
@@ -417,10 +417,34 @@ class GODiff:
     # Buffer management
     # ------------------------------------------------------------------
 
-    def _apply_valid_structure_filters(self, data: list[Atoms]) -> list[Atoms]:
-        """Apply :attr:`valid_structure_filters` to *data* and return survivors.
+    def _apply_after_sample_filters(self, data: list[Atoms]) -> list[Atoms]:
+        """Apply :attr:`after_sample_filters` to *data* and return survivors.
 
-        When :attr:`valid_structure_filters` is ``None`` (the default), all
+        Called right after sampling and before energy/force evaluation.
+        When :attr:`after_sample_filters` is empty, all structures are returned
+        unchanged.  Otherwise a structure is kept only when **every** filter
+        returns ``True``.
+
+        Parameters
+        ----------
+        data : list of ase.Atoms
+
+        Returns
+        -------
+        list of ase.Atoms
+        """
+        if not self.after_sample_filters:
+            return data
+        return [
+            atoms for atoms in data
+            if all(f(atoms) for f in self.after_sample_filters)
+        ]
+
+    def _apply_after_potential_filters(self, data: list[Atoms]) -> list[Atoms]:
+        """Apply :attr:`after_potential_filters` to *data* and return survivors.
+
+        Called right after energy/force evaluation.
+        When :attr:`after_potential_filters` is ``None`` (the default), all
         structures are returned unchanged.  Otherwise a structure is kept only
         when **every** filter returns ``True``.
 
@@ -432,11 +456,11 @@ class GODiff:
         -------
         list of ase.Atoms
         """
-        if not self.valid_structure_filters:
+        if not self.after_potential_filters:
             return data
         return [
             atoms for atoms in data
-            if all(f(atoms) for f in self.valid_structure_filters)
+            if all(f(atoms) for f in self.after_potential_filters)
         ]
 
     def update_buffer(self) -> None:
@@ -522,21 +546,30 @@ class GODiff:
         evaluation_wall_s = 0.0
         iteration_data: list[Atoms] = []
 
-        while self.sample_controller.continue_sampling(
-            [a.get_potential_energy() for a in iteration_data],
-            current_temperature,
-        ):
+        if iteration == 0 and self.seed_structures is not None:
             t0 = time.perf_counter()
-            new_samples = self.sample(exclude_keys=exclude_sample_keys)
-            new_samples = self.check_min_dist(new_samples, min_dist=1.0)
-            sampling_wall_s += time.perf_counter() - t0
-
-            t0 = time.perf_counter()
-            new_samples = self.evaluate(new_samples, iteration=iteration)
+            new_samples = self.evaluate(self.seed_structures, iteration=iteration)
             evaluation_wall_s += time.perf_counter() - t0
 
-            new_samples = self._apply_valid_structure_filters(new_samples)
+            new_samples = self._apply_after_potential_filters(new_samples)
             iteration_data.extend(new_samples)
+
+        else:
+            while self.sample_controller.continue_sampling(
+                [a.get_potential_energy() for a in iteration_data],
+                current_temperature,
+            ):
+                t0 = time.perf_counter()
+                new_samples = self.sample(exclude_keys=exclude_sample_keys)
+                sampling_wall_s += time.perf_counter() - t0
+                new_samples = self._apply_after_sample_filters(new_samples)
+
+                t0 = time.perf_counter()
+                new_samples = self.evaluate(new_samples, iteration=iteration)
+                evaluation_wall_s += time.perf_counter() - t0
+
+                new_samples = self._apply_after_potential_filters(new_samples)
+                iteration_data.extend(new_samples)
 
         # Save this iteration's structures
         name = f"{current_temperature:.3f}" if current_temperature is not None else "initial"
