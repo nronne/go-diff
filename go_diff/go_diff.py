@@ -148,7 +148,7 @@ class GODiff:
         max_steps_per_loop: int = 500,
         after_sample_filter: list[Filter] | None = None,
         after_potential_filter: list[Filter] | None = None,
-        valid_structures_filter: list[Filter] | None = None,
+        valid_structure_filter: list[Filter] | None = None,
         buffer_filters: list[Filter] | None = None,
         device: str = "cuda",
     ) -> None:
