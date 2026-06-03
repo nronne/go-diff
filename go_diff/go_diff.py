@@ -148,6 +148,7 @@ class GODiff:
         max_steps_per_loop: int = 500,
         after_sample_filter: list[Filter] | None = None,
         after_potential_filter: list[Filter] | None = None,
+        valid_structures_filter: list[Filter] | None = None,
         buffer_filters: list[Filter] | None = None,
         device: str = "cuda",
     ) -> None:
@@ -168,7 +169,18 @@ class GODiff:
         self.after_sample_filter: list[Filter] = (
             after_sample_filter if after_sample_filter is not None else [MinDistFilter(1.0)]
         )
+        
         self.after_potential_filter: list[Filter] | None = after_potential_filter
+        if valid_structure_filters is not None:
+            warnings.warn(
+                "Passing valid_structure_filters to the GODiff constructor is deprecated and will be removed in a future release. "
+                "Please apply these filters manually in the sample_stage method instead.",
+                DeprecationWarning,
+            )
+            self.after_potential_filters = valid_structure_filters
+            
+
+            
         self.buffer_filters: list[Filter] = (
             buffer_filters if buffer_filters is not None else [MaxEnergyFilter(0.0)]
         )
