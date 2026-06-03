@@ -178,6 +178,7 @@ class GODiff:
         
         self.after_potential_filters: list[Filter] | None = after_potential_filters
         if valid_structure_filters is not None:
+            import warnings
             warnings.warn(
                 "Passing valid_structure_filters to the GODiff constructor is deprecated and will be removed in a future release. "
                 "Please apply these filters manually in the sample_stage method instead.",
