@@ -80,7 +80,7 @@ class TestMinDistFilter:
         good.calc = SPC(good, energy=-1.0, forces=np.zeros((2, 3)))
         bad = Atoms("HH", positions=[[0, 0, 0], [0.1, 0, 0]])
         bad.calc = SPC(bad, energy=-2.0, forces=np.zeros((2, 3)))
-        gd = _make_godiff(after_potential_filter=[MinDistFilter(1.0)])
+        gd = _make_godiff(after_potential_filters=[MinDistFilter(1.0)])
         result = gd._apply_after_potential_filters([good, bad])
         assert len(result) == 1
         assert result[0] is good
@@ -262,7 +262,7 @@ class TestFilterProtocol:
 
 class TestApplyValidStructureFilters:
     def test_single_filter(self):
-        gd = _make_godiff(after_potential_filter=[MinEnergyFilter(-5.0)])
+        gd = _make_godiff(after_potential_filters=[MinEnergyFilter(-5.0)])
         data = [_make_atoms(-3.0), _make_atoms(-10.0), _make_atoms(-1.0)]
         result = gd._apply_after_potential_filters(data)
         assert len(result) == 2
@@ -270,7 +270,7 @@ class TestApplyValidStructureFilters:
 
     def test_multiple_filters_stacked(self):
         # Keep only structures with -4.0 < e < -0.5
-        gd = _make_godiff(after_potential_filter=[
+        gd = _make_godiff(after_potential_filters=[
             MinEnergyFilter(-4.0),
             MaxEnergyFilter(-0.5),
         ])
@@ -280,13 +280,13 @@ class TestApplyValidStructureFilters:
         assert all(-4.0 < a.get_potential_energy() < -0.5 for a in result)
 
     def test_none_filters_keeps_all(self):
-        gd = _make_godiff(after_potential_filter=None)
+        gd = _make_godiff(after_potential_filters=None)
         data = [_make_atoms(-1.0), _make_atoms(-600.0)]
         result = gd._apply_after_potential_filters(data)
         assert len(result) == 2
 
     def test_empty_filters_keeps_all(self):
-        gd = _make_godiff(after_potential_filter=[])
+        gd = _make_godiff(after_potential_filters=[])
         data = [_make_atoms(-1.0), _make_atoms(-600.0)]
         result = gd._apply_after_potential_filters(data)
         assert len(result) == 2
