@@ -533,8 +533,8 @@ class GODiff:
         ):
             t0 = time.perf_counter()
             new_samples = self.sample(exclude_keys=exclude_sample_keys)
-            new_samples = self._apply_after_sample_filters(new_samples)
             sampling_wall_s += time.perf_counter() - t0
+            new_samples = self._apply_after_sample_filters(new_samples)
 
             t0 = time.perf_counter()
             new_samples = self.evaluate(new_samples, iteration=iteration)

@@ -81,7 +81,7 @@ class TestMinDistFilter:
         bad = Atoms("HH", positions=[[0, 0, 0], [0.1, 0, 0]])
         bad.calc = SPC(bad, energy=-2.0, forces=np.zeros((2, 3)))
         gd = _make_godiff(after_potential_filter=[MinDistFilter(1.0)])
-        result = gd._apply_valid_structure_filters([good, bad])
+        result = gd._apply_after_potential_filters([good, bad])
         assert len(result) == 1
         assert result[0] is good
 
@@ -264,7 +264,7 @@ class TestApplyValidStructureFilters:
     def test_single_filter(self):
         gd = _make_godiff(after_potential_filter=[MinEnergyFilter(-5.0)])
         data = [_make_atoms(-3.0), _make_atoms(-10.0), _make_atoms(-1.0)]
-        result = gd._apply_valid_structure_filters(data)
+        result = gd._apply_after_potential_filters(data)
         assert len(result) == 2
         assert all(a.get_potential_energy() > -5.0 for a in result)
 
@@ -275,20 +275,20 @@ class TestApplyValidStructureFilters:
             MaxEnergyFilter(-0.5),
         ])
         data = [_make_atoms(-1.0), _make_atoms(-2.0), _make_atoms(-5.0), _make_atoms(-0.1)]
-        result = gd._apply_valid_structure_filters(data)
+        result = gd._apply_after_potential_filters(data)
         assert len(result) == 2
         assert all(-4.0 < a.get_potential_energy() < -0.5 for a in result)
 
     def test_none_filters_keeps_all(self):
         gd = _make_godiff(after_potential_filter=None)
         data = [_make_atoms(-1.0), _make_atoms(-600.0)]
-        result = gd._apply_valid_structure_filters(data)
+        result = gd._apply_after_potential_filters(data)
         assert len(result) == 2
 
     def test_empty_filters_keeps_all(self):
         gd = _make_godiff(after_potential_filter=[])
         data = [_make_atoms(-1.0), _make_atoms(-600.0)]
-        result = gd._apply_valid_structure_filters(data)
+        result = gd._apply_after_potential_filters(data)
         assert len(result) == 2
 
 
